@@ -1,0 +1,27 @@
+name: identity
+description: "Shared identity, key derivation, secure-storage tiering, and crypto primitives for Luci apps."
+version: 0.1.0
+publish_to: 'none'
+
+environment:
+  sdk: ^3.11.3
+  flutter: '>=3.10.0'
+
+dependencies:
+  flutter:
+    sdk: flutter
+
+  # Crypto
+  sodium: ^4.0.0            # libsodium bindings (X25519, XSalsa20-Poly1305, BLAKE2b, Ed25519)
+  bip39: ^1.0.6             # BIP39 mnemonic encoding/decoding
+  crypto: ^3.0.3            # SHA-256 for UID + store-binding derivation
+
+  # Secure storage
+  flutter_secure_storage: ^9.2.4   # iOS Keychain / Android EncryptedSharedPreferences
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^6.0.0
+
+flutter:

@@ -24,3 +24,21 @@ migrate_working_dir/
 .flutter-plugins-dependencies
 /build/
 /coverage/
+
+# Native crypto mirrors (native/ios/, native/android/) — kept out of ios/,
+# android/ at the package root: Flutter's tooling (flutter test/pub get, since
+# this package depends on plugins with native code) treats those exact names
+# specially and injects its own GeneratedPluginRegistrant/ephemeral scaffolding
+# into them, which collides with these being independent Swift/Gradle projects.
+
+# Swift Package Manager (native/ios/)
+native/ios/.build/
+native/ios/.swiftpm/
+native/ios/Package.resolved
+
+# Gradle / Android (native/android/)
+native/android/.gradle/
+native/android/**/build/
+native/android/**/.cxx/
+native/android/local.properties
+*.iml

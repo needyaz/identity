@@ -57,12 +57,48 @@ The Android Block Store tier needs a host-app Kotlin MethodChannel handler on
 `IdentityConfig.blockStoreChannel`. Absent that handler it no-ops safely. iOS
 iCloud Keychain works through `flutter_secure_storage` options with no native code.
 
+## Native crypto mirrors — `native/ios/` and `native/android/`
+
+These are **not Dart** — standalone packages (Swift Package, Gradle project)
+alongside `lib/`, for hosts that need to encrypt/decrypt outside the
+Dart/Flutter runtime (killed-state evaluators, notification extensions).
+Extracted verbatim from Mylo's `NativeCrypto.swift` / `NativeCrypto.kt` + JNI
+shim — same byte-parity discipline as the Dart crypto: any change here must
+keep `test/crypto_vectors.json` green on all three platforms (Dart, Swift,
+Kotlin). Scope is deliberately narrow: **only** the generic primitives mirror
+(DH shared secret, `secretbox`/`box`, sealed box) — Mylo's alert-evaluator and
+native-store mirrors are app business logic and stay in Mylo, not here.
+
+- `native/ios/` — SPM package `IdentityCrypto`, depends on `swift-sodium`'s
+  `Clibsodium` product (raw C bindings, not the high-level `Sodium` wrapper).
+  `cd native/ios && swift test` — headless, no simulator.
+- `native/android/` — standalone Gradle project, module `:crypto`, namespace
+  `blue.luci.identity` (renamed from Mylo's `blue.luci.mylo` — nothing
+  app-specific belongs here). JNI shim renamed `mylo_crypto` →
+  `identity_crypto` throughout (lib name, CMake target, exported symbols).
+  Needs the Android SDK + NDK (r27+) to build and a booted emulator/device to
+  test — `cd native/android && ./gradlew :crypto:connectedDebugAndroidTest`.
+  Gradle wrapper jar isn't committed yet (copy one from an existing Gradle
+  9.5.1 project, e.g. Mylo's, or run `gradle wrapper` once a system Gradle is
+  available).
+- Both are currently **unwired** — no app depends on them yet. Mylo still runs
+  its own in-tree copy of `NativeCrypto.swift`/`.kt`. Get these fully working
+  and tested standalone first; wiring Mylo (or any app) onto them is a
+  separate, later step — don't conflate the two.
+- If you touch the crypto logic in `native/ios/` or `native/android/`, the change must be
+  mirrored in `lib/src/crypto.dart` (and vice versa) and `test/crypto_vectors.json`
+  must still pass on all three. This is the same drift risk Mylo's
+  `docs/NATIVE_PARITY.md` warns about — a divergence here is a security bug,
+  not a cosmetic one.
+
 ## Testing
 
 `flutter test` — crypto round-trips + failure modes, identity/BIP39 determinism,
 and the store-binding parity vector. `flutter analyze` must be clean
 (`flutter_lints`). `IdentityStore` itself is platform-channel-bound and isn't
 unit-tested here; it's exercised by the consuming app on a real device/sim.
+`native/ios/`: `swift test`. `native/android/`: `./gradlew :crypto:connectedDebugAndroidTest`
+(emulator required).
 
 ## Docs & commits
 

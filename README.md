@@ -68,8 +68,131 @@ host app's `blockStoreChannel`, implementing `get`/`put`/`delete`. See Mylo's
 Kotlin `BlockStore` handler for a reference implementation. iCloud Keychain on
 iOS works through `flutter_secure_storage` options with no native code.
 
-## Tests
+## Native crypto mirrors: `native/ios/` and `native/android/`
 
-`flutter test` — covers crypto round-trips, identity/BIP39 determinism, and a
-known-answer vector for the store-binding token that is shared with Mylo and the
-Deno server (proves the extracted crypto is byte-identical).
+Some hosts need to encrypt/decrypt outside the Dart/Flutter runtime — a
+killed-state background evaluator, a notification service extension, or
+similar native-only code path that can't reach Flutter's memory. `native/ios/` and
+`native/android/` are standalone packages (not Dart, not consumed via `pubspec.yaml`)
+providing exactly that: a byte-identical native reimplementation of this
+package's generic crypto primitives (DH shared secret, `secretbox`/`box`
+blobs, sealed boxes) — nothing else. Extracted from Mylo's
+`NativeCrypto.swift` / `NativeCrypto.kt` + JNI shim; the crypto is
+byte-identical to that source, pinned by the same `test/crypto_vectors.json`
+golden vectors this package's Dart tests use.
+
+- **`native/ios/`** — Swift Package (`IdentityCrypto` target), depends on
+  [`jedisct1/swift-sodium`](https://github.com/jedisct1/swift-sodium)'s
+  `Clibsodium` product for the libsodium C bindings (not the higher-level
+  `Sodium` wrapper — this keeps the direct C-call style of the original file).
+  `cd native/ios && swift test` — runs headless on plain macOS, no simulator needed.
+- **`native/android/`** — standalone Gradle project, one library module (`:crypto`,
+  namespace `blue.luci.identity`). Loads libsodium.so from the
+  `lazysodium-android` AAR at runtime and resolves symbols via `dlsym` through
+  its own thin JNI bridge (`identity_crypto`), bypassing lazysodium's JNA
+  bridge (`libjnidispatch.so`, which crashes on Android 15's 16 KB page-size
+  requirement). `cd native/android && ./gradlew :crypto:connectedDebugAndroidTest` —
+  the crypto-parity test is instrumented (needs a booted emulator/device),
+  since the JNI `dlopen`-by-soname trick only works inside a live Android
+  linker namespace.
+- **Consuming-app requirement (Android)**: the JNI shim's `dlopen`-by-soname
+  needs the `.so` extracted to disk at install time. The *application* module
+  that packages this library must set
+  `packagingOptions { jniLibs { useLegacyPackaging = true } }` — this can't be
+  enforced from a library module.
+- Not yet wired into any app (Mylo still runs its own in-tree copy; that flip
+  is a separate, later step). These two packages exist to be a fully working,
+  independently testable baseline first.
+
+## Verifying this works
+
+Three independent implementations of the same crypto (Dart, Swift, Kotlin/JNI),
+three independent test suites, all three pinned against the same
+`test/crypto_vectors.json` golden vectors. Anyone with a clean checkout can
+reproduce all of this — no Mylo checkout, no backend, no account needed.
+
+### Dart
+
+Prereqs: Flutter SDK.
+
+```
+flutter pub get
+flutter test
+```
+
+Expect `All tests passed!` — 20 tests across `crypto_test.dart`,
+`identity_test.dart`, and `crypto_vectors_test.dart` (the golden-vector suite).
+
+```
+flutter analyze
+```
+
+Expect `No issues found!`.
+
+### iOS / Swift (`native/ios/`)
+
+Prereqs: macOS with Xcode / the Swift toolchain. First run needs network
+access once, to resolve the `swift-sodium` dependency from GitHub.
+
+```
+cd native/ios
+swift test
+```
+
+Expect `Executed 18 tests, with 0 failures` — `NativeCryptoTests` (16 unit
+tests) + `CryptoVectorsTests` (2, the golden-vector suite, reading
+`test/crypto_vectors.json` directly off disk). This runs **headless on plain
+macOS — no simulator boot required**.
+
+### Android / Kotlin (`native/android/`)
+
+Prereqs: Android SDK with NDK 27+ installed, JDK 17+, and a booted
+emulator/device for the instrumented test. The Gradle wrapper (`gradlew` +
+`gradle/wrapper/`) is committed, so no local Gradle install is needed —
+`./gradlew` bootstraps its own.
+
+Create `native/android/local.properties` (machine-specific, gitignored, not
+committed) pointing at your SDK:
+
+```
+sdk.dir=/path/to/Android/sdk
+```
+
+Build — compiles the JNI shim (`identity_crypto_jni.c`) for all 4 ABIs via
+CMake, no emulator needed:
+
+```
+cd native/android
+./gradlew :crypto:assembleDebug
+```
+
+Expect `BUILD SUCCESSFUL`.
+
+Run the crypto-parity test — this one **must** run on a real emulator/device
+(not a plain JVM unit test): the JNI `dlopen`-by-soname trick that loads
+libsodium only resolves inside a live Android linker namespace.
+
+```
+# in one terminal, boot any AVD and wait for it:
+$ANDROID_HOME/emulator/emulator -avd <your-avd-name> -no-window &
+$ANDROID_HOME/platform-tools/adb wait-for-device
+
+# then:
+./gradlew :crypto:connectedDebugAndroidTest
+```
+
+Expect `BUILD SUCCESSFUL`, and
+`crypto/build/outputs/androidTest-results/connected/debug/TEST-*.xml` shows
+`tests="3" failures="0"` — `nativeCryptoReady` (proves the JNI shim loaded and
+resolved libsodium via `dlsym`), `boxDecryptVectors`, `sealOpenVectors` (the
+golden-vector suite).
+
+### What "all green" proves
+
+If all three suites above pass, the same `box_decrypt` and `seal_open`
+vectors in `test/crypto_vectors.json` decrypted correctly through three
+independently-implemented code paths (Dart/libsodium-dart,
+Swift/swift-sodium's `Clibsodium`, Kotlin via a hand-written JNI bridge to
+`libsodium.so`). That's the actual claim this repo makes: not "the code looks
+right," but "three unrelated implementations agree on the same ciphertexts."
+A failure in any one of them is a crypto-mirror drift bug, not a test flake.

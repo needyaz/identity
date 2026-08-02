@@ -57,6 +57,35 @@ For box public key `0x00 0x01 … 0x1f` (32 bytes):
 These are asserted in `test/identity_test.dart` (Dart) and the vault's
 `supabase/prod/tests/identity_test.ts` (Deno). If either drifts, parity is broken.
 
+## Native crypto mirrors (`native/ios/`, `native/android/`)
+
+The generic primitives above — `deriveSharedSecret`, `encryptBlob`/`decryptBlob`,
+`encryptBlobWithBox`/`decryptBlobWithBox`, `sealString`/`openSealedString`/
+`openSealedBytes` — have byte-identical native reimplementations for hosts that
+can't reach the Dart runtime (a killed-state background evaluator, a
+notification service extension). This is a **three-way mirror**: Dart
+(`lib/src/crypto.dart`), Swift (`native/ios/Sources/IdentityCrypto/NativeCrypto.swift`),
+Kotlin (`native/android/crypto/.../NativeCrypto.kt` + JNI). All three must produce
+identical ciphertext/plaintext for the same inputs.
+
+`test/crypto_vectors.json` is the canonical golden-vector fixture (Dart is the
+source of truth; Swift reads the same file directly off disk by walking up
+from its own path; Android gets a build-time copy staged into its test
+assets, since instrumented tests can't reach the host filesystem). Sections:
+
+- `box_decrypt` — pins X25519 DH (`deriveSharedSecret`/`deriveSharedKey`) +
+  `crypto_box` open, including a unicode payload.
+- `seal_open` — pins `crypto_box_seal_open`, including a tampered ciphertext
+  and a wrong-recipient keypair, both of which must return null/nil, never
+  throw.
+
+A divergence in any of the three implementations against this fixture is a
+crypto-mirror drift bug — the security-relevant kind, not a cosmetic one (see
+Mylo's `docs/NATIVE_PARITY.md` for a real incident of this class). The native
+mirrors are scoped **narrowly** to these primitives only — no identity
+derivation, no BIP39, no secure storage, no app business logic (Mylo's
+alert-evaluator and native-store mirrors stay in Mylo).
+
 ## Secure storage
 
 The seed is mirrored across tiers, read local-first:

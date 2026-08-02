@@ -5,11 +5,10 @@ import 'package:sodium/sodium.dart';
 
 // Generic libsodium primitives — no domain models.
 //
-// Extracted from Mylo's `crypto/crypto.dart`. The crypto here is byte-identical
-// to that source; the only change is that the three domain-separated derivations
-// ([deriveBackupKey], [deriveSigningKeyPair], and `deriveStoreBindingToken` in
-// identity.dart) now take their domain string as a parameter instead of
-// hardcoding Mylo's.
+// Extracted from a shipped production app; the crypto here is byte-identical
+// to that source. The three domain-separated derivations ([deriveBackupKey],
+// [deriveSigningKeyPair], and `deriveStoreBindingToken` in identity.dart) take
+// their domain string as a parameter so every app supplies its own namespace.
 
 // ---------------------------------------------------------------------------
 // Shared secret (DH)
@@ -39,7 +38,7 @@ PrecalculatedBox deriveSharedSecret(
 ///
 /// Any server verifier that re-derives this key must use the same [domain].
 /// Short domains are right-padded to libsodium's 16-byte key minimum, matching
-/// the original Mylo derivation byte-for-byte.
+/// the origin app's shipped derivation byte-for-byte.
 SecureKey deriveBackupKey(
   Sodium sodium,
   Uint8List seed, {

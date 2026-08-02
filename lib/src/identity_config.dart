@@ -36,17 +36,4 @@ class IdentityConfig {
     required this.storeBindingDomain,
     required this.blockStoreChannel,
   });
-
-  /// The original Mylo namespace values, preserved as a known reference so a
-  /// future Mylo migration onto this package stays byte-for-byte compatible.
-  ///
-  /// New apps must NOT reuse these — pick your own domain (e.g. a `vault-*`
-  /// family) so the two apps' identities and derived keys stay disjoint.
-  static const mylo = IdentityConfig(
-    seedStorageKey: 'mylo.seed',
-    backupKeyDomain: 'locly-backup-v1',
-    signingKeyDomain: 'mylo-group-signing',
-    storeBindingDomain: 'mylo-store-binding-v1',
-    blockStoreChannel: 'blue.luci.mylo/blockstore',
-  );
 }

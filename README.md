@@ -1,11 +1,64 @@
 # identity
 
 Shared identity, key derivation, secure-storage tiering, and crypto primitives
-for Luci apps. Extracted from Mylo (`mylo_app/lib/src/crypto/` +
-`services/identity_store.dart`); the crypto is byte-identical to that source.
+for Luci apps. Extracted from a shipped production app; the crypto is
+byte-identical to that source.
 
 This is an L0 foundation package: it has **zero domain coupling** (no location,
 no groups, no app models) and is the substrate the rest of a Luci app builds on.
+
+## Why this exists
+
+The short version of "why did you build your own thing":
+
+**We didn't build crypto — we composed libsodium.** There is no novel
+primitive or protocol in this repo. Every operation is a stock libsodium
+construction — X25519 `crypto_box`, XSalsa20-Poly1305 `secretbox`, sealed
+boxes, Ed25519 detached signatures, keyed BLAKE2b for key derivation — plus
+standard BIP39 for the recovery phrase. The crypto surface is thin glue with
+one fixed, boring wire format: `base64(nonce ‖ ciphertext)`. Read
+`lib/src/crypto.dart`; it's ~250 lines and mostly doc comments.
+
+**The glue is the thing that doesn't exist off the shelf.** What this package
+actually adds is architecture, not cryptography, and each piece earns its
+place:
+
+- *One seed → domain-separated derived keys → one 24-word recovery phrase.*
+  A user has exactly one secret to back up; every app and every purpose
+  (backup encryption, signing, store binding) gets its own key, derived under
+  a distinct domain, so keys never collide or cross-join. Server-account SDKs
+  (OAuth providers, Firebase, passkeys) solve a different problem — they
+  authenticate you *to a server*; none of them hand an app stable local keys
+  for end-to-end encryption.
+- *Tiered seed durability with honest failure semantics.* The seed is
+  mirrored local + cloud (Keychain / iCloud Keychain, EncryptedSharedPreferences /
+  Block Store), and `hasIdentity()` is deliberately tri-state: "couldn't
+  read" is not "absent". That distinction — and `save()` refusing to
+  overwrite an existing seed — exists because collapsing it to a bool caused
+  a real re-onboard/seed-clobber bug class in the production app this was
+  extracted from.
+- *A de-linked store-binding token.* The account token disclosed to
+  Apple/Google for purchases is a sibling hash of the uid, not the uid — so
+  store records can't be joined against backend records. A privacy property
+  no generic library provides.
+- *Native mirrors, because the Dart runtime isn't always there.* Notification
+  service extensions and killed-state evaluators can't reach Flutter memory.
+  The Android mirror hand-rolls a thin JNI bridge specifically because JNA's
+  `libjnidispatch.so` crashes on Android 15's 16 KB page-size devices — a
+  documented workaround, not not-invented-here.
+
+**You don't have to take our word for it.** Three independent implementations
+(Dart, Swift, Kotlin/JNI) are pinned against one shared golden-vector file,
+and every derivation is pinned by known-answer vectors computed with an
+*independent* implementation (Python `hashlib` / `cryptography`) rather than
+by the code testing itself. See "Verifying this works" below and `SPEC.md`
+for the full contract.
+
+The fair criticism that remains: key *management* — not primitives — is where
+real-world failures live, and this package does hand-roll that. The
+presence-unknown tri-state, the overwrite guard, and the parity vectors are
+the direct response; treat `SPEC.md` as the auditable statement of exactly
+what this code promises.
 
 ## What's in here
 
@@ -27,36 +80,35 @@ apps — only these domain strings differ, which keeps each app's identities,
 derived keys, and secure-storage entries disjoint and non-cross-joinable.
 
 ```dart
-const vaultIdentity = IdentityConfig(
-  seedStorageKey: 'vault.seed',
-  backupKeyDomain: 'vault-backup-v1',
-  signingKeyDomain: 'vault-group-signing',
-  storeBindingDomain: 'vault-store-binding-v1',
-  blockStoreChannel: 'blue.luci.vault/blockstore',
+// "acme" is a placeholder — substitute your app's own namespace.
+const acmeIdentity = IdentityConfig(
+  seedStorageKey: 'acme.seed',
+  backupKeyDomain: 'acme-backup-v1',
+  signingKeyDomain: 'acme-group-signing',
+  storeBindingDomain: 'acme-store-binding-v1',
+  blockStoreChannel: 'blue.luci.acme/blockstore',
 );
 ```
-
-`IdentityConfig.mylo` holds Mylo's original values, preserved so a future Mylo
-migration onto this package stays byte-for-byte compatible. **New apps must not
-reuse them** — pick your own domain family.
 
 > ⚠️ Once an app ships, never change `backupKeyDomain`, `signingKeyDomain`, or
 > `storeBindingDomain`: they feed domain-separated derivations that any server
 > verifier must reproduce byte-for-byte, and changing one rotates every user's
-> derived keys out from under their stored data.
+> derived keys out from under their stored data. An app migrating onto this
+> package must define an `IdentityConfig` with exactly the values it already
+> shipped.
 
 ## Usage
 
 ```dart
 final sodium = await SodiumInit.init();
-final store = IdentityStore(vaultIdentity);
+final store = IdentityStore(acmeIdentity);
 
 var identity = await store.load(sodium);
 identity ??= generateIdentity(sodium);
 await store.save(identity);            // refuses to clobber an existing seed
 
 final backupKey = deriveBackupKey(
-  sodium, identity.seed, domain: vaultIdentity.backupKeyDomain,
+  sodium, identity.seed, domain: acmeIdentity.backupKeyDomain,
 );
 final phrase = seedToMnemonic(identity.seed);   // 24-word recovery phrase
 ```
@@ -64,9 +116,11 @@ final phrase = seedToMnemonic(identity.seed);   // 24-word recovery phrase
 ## Native requirement (Android only)
 
 `IdentityStore`'s Block Store tier needs a native MethodChannel handler on the
-host app's `blockStoreChannel`, implementing `get`/`put`/`delete`. See Mylo's
-Kotlin `BlockStore` handler for a reference implementation. iCloud Keychain on
-iOS works through `flutter_secure_storage` options with no native code.
+host app's `blockStoreChannel`, implementing `get`/`put`/`delete` against the
+Play Services Block Store API (the host app supplies the
+`com.google.android.gms:play-services-auth-blockstore` dependency). Absent a
+handler, the tier no-ops safely. iCloud Keychain on iOS works through
+`flutter_secure_storage` options with no native code.
 
 ## Native crypto mirrors: `native/ios/` and `native/android/`
 
@@ -76,10 +130,8 @@ similar native-only code path that can't reach Flutter's memory. `native/ios/` a
 `native/android/` are standalone packages (not Dart, not consumed via `pubspec.yaml`)
 providing exactly that: a byte-identical native reimplementation of this
 package's generic crypto primitives (DH shared secret, `secretbox`/`box`
-blobs, sealed boxes) — nothing else. Extracted from Mylo's
-`NativeCrypto.swift` / `NativeCrypto.kt` + JNI shim; the crypto is
-byte-identical to that source, pinned by the same `test/crypto_vectors.json`
-golden vectors this package's Dart tests use.
+blobs, sealed boxes) — nothing else. All three implementations are pinned by
+the same `test/crypto_vectors.json` golden vectors.
 
 - **`native/ios/`** — Swift Package (`IdentityCrypto` target), depends on
   [`jedisct1/swift-sodium`](https://github.com/jedisct1/swift-sodium)'s
@@ -100,8 +152,7 @@ golden vectors this package's Dart tests use.
   that packages this library must set
   `packagingOptions { jniLibs { useLegacyPackaging = true } }` — this can't be
   enforced from a library module.
-- Not yet wired into any app (Mylo still runs its own in-tree copy; that flip
-  is a separate, later step). These two packages exist to be a fully working,
+- Not yet wired into any app. These two packages exist to be a fully working,
   independently testable baseline first.
 
 ## Verifying this works
@@ -109,7 +160,7 @@ golden vectors this package's Dart tests use.
 Three independent implementations of the same crypto (Dart, Swift, Kotlin/JNI),
 three independent test suites, all three pinned against the same
 `test/crypto_vectors.json` golden vectors. Anyone with a clean checkout can
-reproduce all of this — no Mylo checkout, no backend, no account needed.
+reproduce all of this — no backend, no account needed.
 
 ### Dart
 
@@ -120,8 +171,10 @@ flutter pub get
 flutter test
 ```
 
-Expect `All tests passed!` — 20 tests across `crypto_test.dart`,
-`identity_test.dart`, and `crypto_vectors_test.dart` (the golden-vector suite).
+Expect `All tests passed!` — 23 tests across `crypto_test.dart` (round-trips,
+failure modes, and the backup/signing known-answer vectors),
+`identity_test.dart` (identity determinism + the store-binding parity vector),
+and `crypto_vectors_test.dart` (the golden-vector suite).
 
 ```
 flutter analyze
@@ -139,8 +192,8 @@ cd native/ios
 swift test
 ```
 
-Expect `Executed 18 tests, with 0 failures` — `NativeCryptoTests` (16 unit
-tests) + `CryptoVectorsTests` (2, the golden-vector suite, reading
+Expect `Executed 19 tests, with 0 failures` — `NativeCryptoTests` (16 unit
+tests) + `CryptoVectorsTests` (3, the golden-vector suite, reading
 `test/crypto_vectors.json` directly off disk). This runs **headless on plain
 macOS — no simulator boot required**.
 
@@ -181,17 +234,24 @@ $ANDROID_HOME/platform-tools/adb wait-for-device
 ./gradlew :crypto:connectedDebugAndroidTest
 ```
 
+> ⚠️ Use an AVD **without a screen-lock PIN/pattern**. A locked AVD booted
+> headless stays in the `RUNNING_LOCKED` (credential-encrypted) state, Android
+> refuses to start the test process (`SecurityException: package … is not
+> encryption aware`), and the connected test hangs forever with no error.
+> Verify with `adb shell dumpsys user | grep State:` — it must say
+> `RUNNING_UNLOCKED`.
+
 Expect `BUILD SUCCESSFUL`, and
 `crypto/build/outputs/androidTest-results/connected/debug/TEST-*.xml` shows
-`tests="3" failures="0"` — `nativeCryptoReady` (proves the JNI shim loaded and
-resolved libsodium via `dlsym`), `boxDecryptVectors`, `sealOpenVectors` (the
-golden-vector suite).
+`tests="4" failures="0"` — `nativeCryptoReady` (proves the JNI shim loaded and
+resolved libsodium via `dlsym`), `boxDecryptVectors`, `secretBoxDecryptVectors`,
+`sealOpenVectors` (the golden-vector suite).
 
 ### What "all green" proves
 
-If all three suites above pass, the same `box_decrypt` and `seal_open`
-vectors in `test/crypto_vectors.json` decrypted correctly through three
-independently-implemented code paths (Dart/libsodium-dart,
+If all three suites above pass, the same `box_decrypt`, `secretbox_decrypt`,
+and `seal_open` vectors in `test/crypto_vectors.json` decrypted correctly
+through three independently-implemented code paths (Dart/libsodium-dart,
 Swift/swift-sodium's `Clibsodium`, Kotlin via a hand-written JNI bridge to
 `libsodium.so`). That's the actual claim this repo makes: not "the code looks
 right," but "three unrelated implementations agree on the same ciphertexts."

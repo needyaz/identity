@@ -37,6 +37,27 @@ void main() {
     }
   });
 
+  test('secretbox_decrypt vectors (real decryptBlob)', () {
+    for (final c in vectors['secretbox_decrypt'] as List<dynamic>) {
+      final v = c as Map<String, dynamic>;
+      final key = SecureKey.fromList(
+          sodium, Uint8List.fromList(base64.decode(v['keyB64'] as String)));
+      if (v['expectFail'] == true) {
+        expect(() => decryptBlob(sodium, v['b64'] as String, key),
+            throwsA(isA<SodiumException>()),
+            reason: '${v['id']}: ${v['desc']}');
+      } else {
+        final result =
+            decryptBlob(sodium, v['b64'] as String, key) as Map<String, dynamic>;
+        final expected = v['expected'] as Map<String, dynamic>;
+        for (final k in expected.keys) {
+          expect(result[k], expected[k], reason: '${v['id']}: field $k');
+        }
+      }
+      key.dispose();
+    }
+  });
+
   test('seal_open vectors (real openSealedString)', () {
     for (final c in vectors['seal_open'] as List<dynamic>) {
       final v = c as Map<String, dynamic>;

@@ -31,7 +31,7 @@ android {
     // emulator because NativeCrypto is JNI. It reads the SHARED vectors from
     // the test APK's assets; copy the single source (../../test/crypto_vectors.json,
     // the Dart identity package's canonical copy) into a generated assets dir
-    // at build time so there is no committed duplicate — same pattern Mylo uses.
+    // at build time so there is no committed duplicate.
     sourceSets.getByName("androidTest").assets.srcDir(
         layout.buildDirectory.dir("generated/androidTestAssets"))
 
@@ -40,8 +40,6 @@ android {
     // compressed inside the APK zip. A CONSUMING APPLICATION module (not this
     // library) must set:
     //   packagingOptions { jniLibs { useLegacyPackaging = true } }
-    // Mylo's app/build.gradle.kts already does this for its own JNI lib;
-    // when Mylo depends on this module instead, that setting must stay.
 }
 
 dependencies {

@@ -1,5 +1,5 @@
 /// Shared identity, key derivation, secure-storage tiering, and crypto
-/// primitives for Luci apps. Extracted from Mylo.
+/// primitives for Luci apps.
 ///
 /// Re-exports the libsodium types ([Sodium], [SecureKey], [KeyPair],
 /// [PrecalculatedBox]) used across the public API so consumers need only depend

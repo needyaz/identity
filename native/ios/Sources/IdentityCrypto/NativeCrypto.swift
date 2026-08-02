@@ -6,10 +6,10 @@ import Clibsodium
 /// Wire format: base64(nonce || ciphertext) — identical to the Dart crypto.dart helpers.
 struct NativeCrypto {
 
-  // MARK: – Box (asymmetric, watchee SK + watcher PK)
+  // MARK: – Box (asymmetric, our SK + their PK)
 
-  /// Derive the X25519 shared key from our secret key and the watcher's public key.
-  /// Returns nil if key lengths are wrong.
+  /// Derive the X25519 shared key from our secret key and the other party's
+  /// public key. Returns nil if key lengths are wrong.
   static func deriveSharedKey(sk: [UInt8], pk: [UInt8]) -> [UInt8]? {
     guard sk.count == Int(crypto_box_secretkeybytes()),
           pk.count == Int(crypto_box_publickeybytes()) else { return nil }
@@ -52,9 +52,9 @@ struct NativeCrypto {
     return combined.base64EncodedString()
   }
 
-  // MARK: – SecretBox (symmetric, group key)
+  // MARK: – SecretBox (symmetric)
 
-  /// Encrypt a location payload as base64(nonce || secretbox-ciphertext).
+  /// Encrypt a JSON-serialisable payload as base64(nonce || secretbox-ciphertext).
   static func encryptSecretBox(payload: [String: Any], key: [UInt8]) -> String? {
     guard key.count == Int(crypto_secretbox_keybytes()),
           let json = try? JSONSerialization.data(withJSONObject: payload)
@@ -139,7 +139,7 @@ struct NativeCrypto {
     return rc == 0 ? Data(plaintext) : nil
   }
 
-  // MARK: – Sealed box (anonymous box — joiner's display name)
+  // MARK: – Sealed box (anonymous box)
 
   /// Decrypt a `crypto_box_seal` ciphertext using the recipient's keypair.
   /// Returns the UTF-8 plaintext string, or nil on any failure.

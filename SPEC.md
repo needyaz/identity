@@ -44,18 +44,34 @@ alphabet (`+`/`/`), not URL-safe.
 
 Per-app namespace, 5 fields: `seedStorageKey`, `backupKeyDomain`,
 `signingKeyDomain`, `storeBindingDomain`, `blockStoreChannel`. Each app picks a
-**distinct** set so identities/keys never collide. `IdentityConfig.mylo` holds
-Mylo's original values (do not reuse).
+**distinct** set so identities/keys never collide, defines it in its own
+codebase, and must never change it after shipping.
 
 ## Known-answer vectors (parity locks)
 
 For box public key `0x00 0x01 … 0x1f` (32 bytes):
 - `uid` = `630dcd2966c4336691125448bbb25b4f`
-- `deriveStoreBindingToken(pub, domain="mylo-store-binding-v1")` =
-  `710c8ec7-bdfd-4ab9-d935-81c762bc0e5f`
+- `deriveStoreBindingToken(pub, domain="identity-spec-binding-v1")` =
+  `520b61d7-b56f-74f5-726c-3dfab07859a0`
 
-These are asserted in `test/identity_test.dart` (Dart) and the vault's
-`supabase/prod/tests/identity_test.ts` (Deno). If either drifts, parity is broken.
+For seed `0x00 0x01 … 0x1f` (32 bytes):
+- `deriveBackupKey(seed, domain="identity-pad-v1")` (15-byte domain — exercises
+  the pad-to-16 branch) =
+  `a509286e124be20c5dc50f097e7dbbcae1773919d88d3d0bc3a9af2fddce45e8`
+- `deriveBackupKey(seed, domain="identity-spec-backup-v1")` (23-byte domain —
+  no padding) =
+  `1580c0cdbd94fca160c0b78e4758755bda45e39dc5786db92541b2f60b535e98`
+- `deriveSigningKeyPair(seed, domain="identity-spec-signing-v1").publicKey` =
+  `e986c2797e79ee0aa8ed38dc90c9292fc4ff0d101eee5b85d7c38bf277d01d20`
+
+All vectors use neutral spec domains and were computed with an independent
+implementation (Python `hashlib` for the SHA-256 and keyed-BLAKE2b stages,
+`cryptography`'s Ed25519 for seed → public key), so they pin the derivations
+against a second implementation rather than against this code itself. They are
+asserted in `test/identity_test.dart` and `test/crypto_test.dart`. If any
+drifts, parity is broken. Consuming apps and their server verifiers should
+additionally pin vectors under their own production domains in their own
+repos.
 
 ## Native crypto mirrors (`native/ios/`, `native/android/`)
 
@@ -78,13 +94,17 @@ assets, since instrumented tests can't reach the host filesystem). Sections:
 - `seal_open` — pins `crypto_box_seal_open`, including a tampered ciphertext
   and a wrong-recipient keypair, both of which must return null/nil, never
   throw.
+- `secretbox_decrypt` — pins `crypto_secretbox` open (the symmetric backup/blob
+  format), including a unicode payload, a tampered ciphertext, and a wrong key.
+  The vector key is itself the `deriveBackupKey(seed 0x00..0x1f,
+  "identity-pad-v1")` known answer, so the section pins the full
+  derive → encrypt → decrypt backup pipeline. `expectFail` cases fail as
+  null/nil on the native mirrors and as `SodiumException` in Dart.
 
 A divergence in any of the three implementations against this fixture is a
-crypto-mirror drift bug — the security-relevant kind, not a cosmetic one (see
-Mylo's `docs/NATIVE_PARITY.md` for a real incident of this class). The native
-mirrors are scoped **narrowly** to these primitives only — no identity
-derivation, no BIP39, no secure storage, no app business logic (Mylo's
-alert-evaluator and native-store mirrors stay in Mylo).
+crypto-mirror drift bug — the security-relevant kind, not a cosmetic one. The
+native mirrors are scoped **narrowly** to these primitives only — no identity
+derivation, no BIP39, no secure storage, no app business logic.
 
 ## Secure storage
 

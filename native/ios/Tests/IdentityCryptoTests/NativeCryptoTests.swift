@@ -1,8 +1,7 @@
 import XCTest
 @testable import IdentityCrypto
 
-// NativeCrypto — encrypt / decrypt round-trips
-// Ported verbatim from Mylo's ios/RunnerTests/RunnerTests.swift NativeCryptoTests.
+// NativeCrypto — encrypt / decrypt round-trips and failure modes.
 
 final class NativeCryptoTests: XCTestCase {
 

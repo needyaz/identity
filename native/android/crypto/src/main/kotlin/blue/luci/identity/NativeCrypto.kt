@@ -53,6 +53,7 @@ object NativeCrypto {
     @JvmStatic private external fun nativeBoxEasyAfterNm(plaintext: ByteArray, nonce: ByteArray, sharedKey: ByteArray): ByteArray?
     @JvmStatic private external fun nativeBoxOpenEasyAfterNm(ciphertext: ByteArray, nonce: ByteArray, sharedKey: ByteArray): ByteArray?
     @JvmStatic private external fun nativeSecretBoxEasy(plaintext: ByteArray, nonce: ByteArray, key: ByteArray): ByteArray?
+    @JvmStatic private external fun nativeSecretBoxOpenEasy(ciphertext: ByteArray, nonce: ByteArray, key: ByteArray): ByteArray?
     @JvmStatic private external fun nativeBoxSealOpen(ciphertext: ByteArray, recipientPk: ByteArray, recipientSk: ByteArray): ByteArray?
 
     fun deriveSharedKey(sk: ByteArray, pk: ByteArray): ByteArray? {
@@ -104,5 +105,19 @@ object NativeCrypto {
         val cipher = nativeSecretBoxEasy(json, nonce, key) ?: return null
         if (cipher.size != SECRETBOX_MACBYTES + json.size) return null
         return Base64.encodeToString(nonce + cipher, Base64.NO_WRAP)
+    }
+
+    fun decryptSecretBox(b64Payload: String, key: ByteArray): Map<String, Any>? {
+        if (!ready) return null
+        if (key.size != SECRETBOX_KEYBYTES) return null
+        val combined = try { Base64.decode(b64Payload, Base64.NO_WRAP) } catch (_: Exception) { return null }
+        if (combined.size < SECRETBOX_NONCEBYTES + SECRETBOX_MACBYTES) return null
+        val nonce      = combined.sliceArray(0 until SECRETBOX_NONCEBYTES)
+        val ciphertext = combined.sliceArray(SECRETBOX_NONCEBYTES until combined.size)
+        val plaintext  = nativeSecretBoxOpenEasy(ciphertext, nonce, key) ?: return null
+        return try {
+            val json = org.json.JSONObject(String(plaintext, Charsets.UTF_8))
+            buildMap { json.keys().forEach { k -> put(k, json.get(k)) } }
+        } catch (_: Exception) { null }
     }
 }

@@ -64,6 +64,25 @@ class CryptoVectorsAndroidTest {
     }
 
     @Test
+    fun secretBoxDecryptVectors() {
+        val cases = vectors().getJSONArray("secretbox_decrypt")
+        for (i in 0 until cases.length()) {
+            val v = cases.getJSONObject(i)
+            val id = v.getString("id")
+            val map = NativeCrypto.decryptSecretBox(v.getString("b64"), b64(v.getString("keyB64")))
+            if (v.optBoolean("expectFail", false)) {
+                assertNull("$id: ${v.optString("desc")}", map)
+            } else {
+                assertNotNull("$id: decryptSecretBox", map)
+                val expected = v.getJSONObject("expected")
+                for (k in expected.keys()) {
+                    assertEquals("$id: field $k", expected.getString(k), map!![k] as String)
+                }
+            }
+        }
+    }
+
+    @Test
     fun sealOpenVectors() {
         val cases = vectors().getJSONArray("seal_open")
         for (i in 0 until cases.length()) {

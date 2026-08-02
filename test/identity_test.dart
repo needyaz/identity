@@ -1,5 +1,5 @@
 /// Identity derivation, BIP39 round-trip, and the store-binding known-answer
-/// vector that locks byte-parity with Mylo and the Deno server.
+/// vector that locks byte-parity with any server-side verifier.
 library;
 
 import 'dart:typed_data';
@@ -43,18 +43,19 @@ void main() {
   });
 
   group('deriveStoreBindingToken', () {
-    // Shared known-answer vector with Mylo + the Deno server
-    // (supabase/prod/tests/account_binding_test.ts): box pubkey 0x00..0x1f.
-    // Matching it proves this extraction is byte-identical to the source.
+    // Known-answer vector: box pubkey 0x00..0x1f under the spec's neutral test
+    // domain. The expected token was computed independently (Python hashlib
+    // SHA-256), so this pins the derivation against a second implementation.
+    // Consuming apps should pin their own production domains in their own
+    // test suites the same way.
     final pub = Uint8List.fromList(List<int>.generate(32, (i) => i));
-    const myloTokenUuid = '710c8ec7-bdfd-4ab9-d935-81c762bc0e5f';
+    const specTokenUuid = '520b61d7-b56f-74f5-726c-3dfab07859a0';
     const uidHex = '630dcd2966c4336691125448bbb25b4f';
 
-    test('matches the Mylo known-answer vector under the mylo domain', () {
+    test('matches the known-answer vector', () {
       expect(
-        deriveStoreBindingToken(pub,
-            domain: IdentityConfig.mylo.storeBindingDomain),
-        myloTokenUuid,
+        deriveStoreBindingToken(pub, domain: 'identity-spec-binding-v1'),
+        specTokenUuid,
       );
     });
 
@@ -63,7 +64,7 @@ void main() {
     });
 
     test('is a valid UUID and not equal to the uid (de-linked)', () {
-      final t = deriveStoreBindingToken(pub, domain: 'vault-store-binding-v1');
+      final t = deriveStoreBindingToken(pub, domain: 'acme-store-binding-v1');
       expect(
         RegExp(r'^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$')
             .hasMatch(t),
@@ -74,9 +75,8 @@ void main() {
 
     test('different domains yield different tokens', () {
       expect(
-        deriveStoreBindingToken(pub, domain: 'vault-store-binding-v1'),
-        isNot(deriveStoreBindingToken(pub,
-            domain: IdentityConfig.mylo.storeBindingDomain)),
+        deriveStoreBindingToken(pub, domain: 'acme-store-binding-v1'),
+        isNot(deriveStoreBindingToken(pub, domain: 'identity-spec-binding-v1')),
       );
     });
   });

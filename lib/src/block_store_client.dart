@@ -10,8 +10,8 @@ import 'package:flutter/services.dart';
 ///
 /// The host app must register a native MethodChannel handler under the channel
 /// name passed to the constructor (`IdentityConfig.blockStoreChannel`) that
-/// implements `get` / `put` / `delete`. See the Mylo Kotlin handler for a
-/// reference implementation.
+/// implements `get` / `put` / `delete` against the Play Services Block Store
+/// API (`com.google.android.gms:play-services-auth-blockstore`).
 ///
 /// All operations are best-effort. They return null/false on:
 ///   - non-Android platforms (the calling code should already gate on this)

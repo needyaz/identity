@@ -26,6 +26,7 @@ typedef int   (*crypto_box_beforenm_fn)(unsigned char *, const unsigned char *, 
 typedef int   (*crypto_box_easy_afternm_fn)(unsigned char *, const unsigned char *, unsigned long long, const unsigned char *, const unsigned char *);
 typedef int   (*crypto_box_open_easy_afternm_fn)(unsigned char *, const unsigned char *, unsigned long long, const unsigned char *, const unsigned char *);
 typedef int   (*crypto_secretbox_easy_fn)(unsigned char *, const unsigned char *, unsigned long long, const unsigned char *, const unsigned char *);
+typedef int   (*crypto_secretbox_open_easy_fn)(unsigned char *, const unsigned char *, unsigned long long, const unsigned char *, const unsigned char *);
 typedef int   (*crypto_box_seal_open_fn)(unsigned char *, const unsigned char *, unsigned long long, const unsigned char *, const unsigned char *);
 
 static randombytes_buf_fn             fn_randombytes_buf             = NULL;
@@ -33,6 +34,7 @@ static crypto_box_beforenm_fn         fn_crypto_box_beforenm         = NULL;
 static crypto_box_easy_afternm_fn     fn_crypto_box_easy_afternm     = NULL;
 static crypto_box_open_easy_afternm_fn fn_crypto_box_open_easy_afternm = NULL;
 static crypto_secretbox_easy_fn       fn_crypto_secretbox_easy       = NULL;
+static crypto_secretbox_open_easy_fn  fn_crypto_secretbox_open_easy  = NULL;
 static crypto_box_seal_open_fn        fn_crypto_box_seal_open        = NULL;
 
 // Handle from dlopen — kept open so symbols remain valid for the process lifetime.
@@ -51,11 +53,13 @@ static int resolve_symbols(void) {
     fn_crypto_box_easy_afternm      = (crypto_box_easy_afternm_fn)      dlsym(sodium_handle, "crypto_box_easy_afternm");
     fn_crypto_box_open_easy_afternm = (crypto_box_open_easy_afternm_fn) dlsym(sodium_handle, "crypto_box_open_easy_afternm");
     fn_crypto_secretbox_easy        = (crypto_secretbox_easy_fn)        dlsym(sodium_handle, "crypto_secretbox_easy");
+    fn_crypto_secretbox_open_easy   = (crypto_secretbox_open_easy_fn)   dlsym(sodium_handle, "crypto_secretbox_open_easy");
     fn_crypto_box_seal_open         = (crypto_box_seal_open_fn)         dlsym(sodium_handle, "crypto_box_seal_open");
 
     if (!fn_randombytes_buf || !fn_crypto_box_beforenm ||
         !fn_crypto_box_easy_afternm || !fn_crypto_box_open_easy_afternm ||
-        !fn_crypto_secretbox_easy || !fn_crypto_box_seal_open) {
+        !fn_crypto_secretbox_easy || !fn_crypto_secretbox_open_easy ||
+        !fn_crypto_box_seal_open) {
         LOGE("Failed to resolve libsodium symbols via dlsym");
         fn_randombytes_buf = NULL;
         return -1;
@@ -203,6 +207,41 @@ Java_blue_luci_identity_NativeCrypto_nativeSecretBoxEasy(
     (*env)->ReleaseByteArrayElements(env, plaintext, (jbyte *)c_pt, JNI_ABORT);
     (*env)->ReleaseByteArrayElements(env, nonce,     (jbyte *)c_n,  JNI_ABORT);
     (*env)->ReleaseByteArrayElements(env, key,       (jbyte *)c_k,  JNI_ABORT);
+
+    return result;
+}
+
+// crypto_secretbox_open_easy: decrypt ciphertext (MAC || cipher) with symmetric key + nonce.
+// Returns plaintext or null on failure (includes authentication failure — wrong key or tampered data).
+JNIEXPORT jbyteArray JNICALL
+Java_blue_luci_identity_NativeCrypto_nativeSecretBoxOpenEasy(
+        JNIEnv *env, jclass clazz,
+        jbyteArray ciphertext, jbyteArray nonce, jbyteArray key) {
+    (void)clazz;
+    if (resolve_symbols() != 0) return NULL;
+
+    jsize ct_len = (*env)->GetArrayLength(env, ciphertext);
+    jsize n_len  = (*env)->GetArrayLength(env, nonce);
+    jsize k_len  = (*env)->GetArrayLength(env, key);
+    if (ct_len < SECRETBOX_MACBYTES || n_len != SECRETBOX_NONCEBYTES || k_len != 32) return NULL;
+
+    unsigned char *c_ct = (unsigned char *)(*env)->GetByteArrayElements(env, ciphertext, NULL);
+    unsigned char *c_n  = (unsigned char *)(*env)->GetByteArrayElements(env, nonce, NULL);
+    unsigned char *c_k  = (unsigned char *)(*env)->GetByteArrayElements(env, key, NULL);
+
+    jsize pt_len = ct_len - SECRETBOX_MACBYTES;
+    unsigned char *plain = (unsigned char *)malloc((size_t)pt_len);
+    jbyteArray result = NULL;
+
+    if (plain) {
+        int rc = fn_crypto_secretbox_open_easy(plain, c_ct, (unsigned long long)ct_len, c_n, c_k);
+        if (rc == 0) result = bytes_to_jba(env, plain, pt_len);
+        free(plain);
+    }
+
+    (*env)->ReleaseByteArrayElements(env, ciphertext, (jbyte *)c_ct, JNI_ABORT);
+    (*env)->ReleaseByteArrayElements(env, nonce,      (jbyte *)c_n,  JNI_ABORT);
+    (*env)->ReleaseByteArrayElements(env, key,        (jbyte *)c_k,  JNI_ABORT);
 
     return result;
 }

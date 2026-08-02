@@ -258,3 +258,27 @@ Swift/swift-sodium's `Clibsodium`, Kotlin via a hand-written JNI bridge to
 `libsodium.so`). That's the actual claim this repo makes: not "the code looks
 right," but "three unrelated implementations agree on the same ciphertexts."
 A failure in any one of them is a crypto-mirror drift bug, not a test flake.
+
+## License
+
+MIT — see [LICENSE](LICENSE). No third-party code is vendored into this repo;
+everything below is consumed as an unmodified dependency.
+
+Third-party licenses (relevant when redistributing built apps, since their
+binaries embed these — preserve the upstream notices):
+
+| Dependency | Used by | License |
+|---|---|---|
+| [libsodium](https://github.com/jedisct1/libsodium) | all three implementations | ISC |
+| [`sodium`](https://pub.dev/packages/sodium) (Dart bindings) | Dart | BSD-3-Clause |
+| [`bip39`](https://pub.dev/packages/bip39), [`crypto`](https://pub.dev/packages/crypto), [`flutter_secure_storage`](https://pub.dev/packages/flutter_secure_storage) | Dart | BSD-3-Clause |
+| [swift-sodium](https://github.com/jedisct1/swift-sodium) (`Clibsodium`) | `native/ios/` | ISC |
+| [lazysodium-android](https://github.com/terl/lazysodium-android) | `native/android/` | MPL-2.0 |
+| Gradle wrapper | `native/android/` build | Apache-2.0 |
+
+Note on `lazysodium-android`: it is used **only** as the delivery vehicle for
+its bundled, 16 KB-aligned `libsodium.so` (ISC) — its MPL-2.0 Java classes are
+loaded never and modified never, so MPL's file-level copyleft imposes nothing
+here; apps wanting a pure-permissive dependency tree can exclude those classes
+in packaging. Android's Block Store itself comes from Google Play Services
+(proprietary), which the consuming app supplies.

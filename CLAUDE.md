@@ -92,9 +92,12 @@ in the apps, not here.
 ## Testing
 
 `flutter test` — crypto round-trips + failure modes, identity/BIP39 determinism,
-and the store-binding parity vector. `flutter analyze` must be clean
-(`flutter_lints`). `IdentityStore` itself is platform-channel-bound and isn't
-unit-tested here; it's exercised by the consuming app on a real device/sim.
+the store-binding parity vector, and the `IdentityStore`/`BlockStoreClient`
+tier/tri-state logic (via the constructor test seams — fakes injected for
+storage, platform flag, and retry delay; the seams' defaults must always
+preserve shipped behavior exactly). `flutter analyze` must be clean
+(`flutter_lints`). The real platform-channel storage behavior is still only
+exercised by a consuming app on a device/sim.
 `native/ios/`: `swift test`. `native/android/`: `./gradlew :crypto:connectedDebugAndroidTest`
 (emulator required).
 

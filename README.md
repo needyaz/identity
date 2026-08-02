@@ -171,10 +171,12 @@ flutter pub get
 flutter test
 ```
 
-Expect `All tests passed!` — 23 tests across `crypto_test.dart` (round-trips,
+Expect `All tests passed!` — 51 tests across `crypto_test.dart` (round-trips,
 failure modes, and the backup/signing known-answer vectors),
 `identity_test.dart` (identity determinism + the store-binding parity vector),
-and `crypto_vectors_test.dart` (the golden-vector suite).
+`crypto_vectors_test.dart` (the golden-vector suite), and
+`identity_store_test.dart` / `block_store_client_test.dart` (the storage
+tier/tri-state decision logic, run against injected fakes).
 
 ```
 flutter analyze

@@ -57,13 +57,28 @@ class IdentitySeedPresenceUnknown implements Exception {
 class IdentityStore {
   final IdentityConfig config;
 
-  IdentityStore(this.config)
-      : _blockStore = BlockStoreClient(config.blockStoreChannel);
+  /// The optional parameters are a test seam: production callers use
+  /// `IdentityStore(config)` and get exactly the shipped behavior (platform
+  /// secure storage, real platform detection, 2 s cloud-sync retry waits).
+  /// Tests inject fakes to exercise the tier/tri-state decision logic on the
+  /// host, including the Android arms.
+  IdentityStore(
+    this.config, {
+    FlutterSecureStorage? local,
+    FlutterSecureStorage? cloud,
+    BlockStoreClient? blockStore,
+    bool? isAndroid,
+    Duration syncRetryDelay = const Duration(seconds: 2),
+  })  : _local = local ?? _defaultLocal,
+        _cloud = cloud ?? _defaultCloud,
+        _blockStore = blockStore ?? BlockStoreClient(config.blockStoreChannel),
+        _isAndroid = isAndroid ?? Platform.isAndroid,
+        _syncRetryDelay = syncRetryDelay;
 
   String get _seedKey => config.seedStorageKey;
 
   // Local-only — always works, used for all normal reads.
-  static const _local = FlutterSecureStorage(
+  static const _defaultLocal = FlutterSecureStorage(
     iOptions: IOSOptions(
       accessibility: KeychainAccessibility.first_unlock,
       synchronizable: false,
@@ -75,7 +90,7 @@ class IdentityStore {
   // unavailable (disabled in Settings or no Apple ID signed in). On Android
   // this resolves to the same EncryptedSharedPreferences as _local (the
   // synchronizable flag is a no-op there); the real Android cloud is _blockStore.
-  static const _cloud = FlutterSecureStorage(
+  static const _defaultCloud = FlutterSecureStorage(
     iOptions: IOSOptions(
       accessibility: KeychainAccessibility.first_unlock,
       synchronizable: true,
@@ -83,13 +98,19 @@ class IdentityStore {
     aOptions: AndroidOptions(encryptedSharedPreferences: true),
   );
 
+  final FlutterSecureStorage _local;
+  final FlutterSecureStorage _cloud;
+
   // Android Block Store mirror — best-effort. No-op on non-Android.
   final BlockStoreClient _blockStore;
+
+  final bool _isAndroid;
+  final Duration _syncRetryDelay;
 
   /// Returns true if the identity seed is present in the cloud backup tier:
   /// Block Store on Android, iCloud Keychain on iOS.
   Future<bool> isCloudBackedUp() async {
-    if (Platform.isAndroid) return await _blockStore.get(_seedKey) != null;
+    if (_isAndroid) return await _blockStore.get(_seedKey) != null;
     try {
       return await _cloud.containsKey(key: _seedKey);
     } catch (_) {
@@ -116,7 +137,7 @@ class IdentityStore {
     } catch (e) {
       firstFailure ??= e;
     }
-    if (Platform.isAndroid) {
+    if (_isAndroid) {
       try {
         if (await _blockStore.get(_seedKey) != null) return true;
       } catch (e) {
@@ -171,7 +192,7 @@ class IdentityStore {
       }
       if (attempt == 0) {
         debugPrint('[IdentityStore] load: iCloud empty, waiting 2 s for sync…');
-        await Future<void>.delayed(const Duration(seconds: 2));
+        await Future<void>.delayed(_syncRetryDelay);
       }
     }
 
@@ -179,12 +200,12 @@ class IdentityStore {
     // on the same Google account). Block Store cloud sync has a documented
     // delay — data may not be available immediately after reinstall. We try
     // once, then retry after a short wait to give the cloud sync time to land.
-    if (Platform.isAndroid) {
+    if (_isAndroid) {
       debugPrint('[IdentityStore] load: trying Block Store (attempt 1)');
       String? blockB64 = await _blockStore.get(_seedKey);
       if (blockB64 == null) {
         debugPrint('[IdentityStore] load: Block Store empty, waiting 2 s for cloud sync…');
-        await Future<void>.delayed(const Duration(seconds: 2));
+        await Future<void>.delayed(_syncRetryDelay);
         blockB64 = await _blockStore.get(_seedKey);
         debugPrint('[IdentityStore] load: Block Store retry: ${blockB64 != null ? 'found' : 'still empty'}');
       } else {
@@ -234,7 +255,7 @@ class IdentityStore {
     // Block Store copy — Android only; best effort. BlockStoreClient.put
     // already no-ops on non-Android.
     final blockOk = await _blockStore.put(_seedKey, encoded);
-    if (Platform.isAndroid) {
+    if (_isAndroid) {
       debugPrint('[IdentityStore] save: Block Store put: $blockOk');
     }
   }
@@ -250,7 +271,7 @@ class IdentityStore {
     } catch (e) {
       debugPrint('[IdentityStore] iCloud sync failed: $e');
     }
-    if (Platform.isAndroid && await _blockStore.get(_seedKey) == null) {
+    if (_isAndroid && await _blockStore.get(_seedKey) == null) {
       await _blockStore.put(_seedKey, encoded);
     }
   }

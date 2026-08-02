@@ -27,20 +27,31 @@ class BlockStoreClient {
 
   /// [channelName] must match the native handler registered by the host app
   /// (e.g. `'blue.luci.<app>/blockstore'`).
-  BlockStoreClient(String channelName) : _channel = MethodChannel(channelName);
+  ///
+  /// [isAndroid] and [timeout] are a test seam — production callers take the
+  /// defaults (real platform detection, 5 s timeout).
+  BlockStoreClient(
+    String channelName, {
+    bool? isAndroid,
+    Duration timeout = const Duration(seconds: 5),
+  })  : _channel = MethodChannel(channelName),
+        _isAndroid = isAndroid ?? Platform.isAndroid,
+        _kTimeout = timeout;
+
+  final bool _isAndroid;
 
   // Play Services Block Store tasks sometimes never call their success/failure
   // listener on AVDs without Play Store (the Task neither succeeds nor fails,
   // so the MethodChannel result is never delivered and the Dart await hangs
   // forever). A 5-second timeout converts that into a null/false return, which
   // the callers already treat as "tier unavailable".
-  static const _kTimeout = Duration(seconds: 5);
+  final Duration _kTimeout;
 
   /// Reads the UTF-8 string stored under [key]. Returns null if unavailable
   /// for any reason. iOS / non-Android always returns null without making
   /// any platform call.
   Future<String?> get(String key) async {
-    if (!Platform.isAndroid) return null;
+    if (!_isAndroid) return null;
     try {
       return await _channel
           .invokeMethod<String>('get', {'key': key}).timeout(_kTimeout);
@@ -53,7 +64,7 @@ class BlockStoreClient {
   /// Writes the UTF-8 string [value] under [key]. Returns true on success.
   /// On iOS / non-Android, no-ops and returns false.
   Future<bool> put(String key, String value) async {
-    if (!Platform.isAndroid) return false;
+    if (!_isAndroid) return false;
     try {
       final ok = await _channel
           .invokeMethod<bool>('put', {'key': key, 'value': value})
@@ -71,7 +82,7 @@ class BlockStoreClient {
   /// AVDs/cold boots); logs a warning via [print] (not debugPrint) so that
   /// a persistent timeout surfaces in crash logs even in release builds.
   Future<bool> delete(String key) async {
-    if (!Platform.isAndroid) return true;
+    if (!_isAndroid) return true;
     for (var attempt = 0; attempt < 2; attempt++) {
       try {
         final ok = await _channel

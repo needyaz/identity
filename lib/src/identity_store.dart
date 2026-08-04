@@ -279,11 +279,45 @@ class IdentityStore {
   }
 
   /// Wipe the stored identity (used for reset / account deletion).
+  ///
+  /// Every tier is attempted unconditionally; failures are collected rather
+  /// than short-circuiting or being swallowed. If any tier could not confirm
+  /// deletion, throws [IdentityClearIncomplete] naming the tiers — a silently
+  /// surviving copy (e.g. iCloud Keychain locked/offline during "Delete my
+  /// account") would otherwise be found by the next [load], promoted back to
+  /// local, and resurrect the "deleted" identity. Deletes are idempotent, so
+  /// callers can simply retry on catch.
   Future<void> clear() async {
-    await _local.delete(key: _seedKey);
+    final failedTiers = <String>[];
+    try {
+      await _local.delete(key: _seedKey);
+    } catch (_) {
+      failedTiers.add('local');
+    }
     try {
       await _cloud.delete(key: _seedKey);
-    } catch (_) {}
-    await _blockStore.delete(_seedKey);
+    } catch (_) {
+      failedTiers.add('cloud');
+    }
+    try {
+      // BlockStoreClient.delete reports failure as `false`, not a throw
+      // (and returns true on non-Android, where the tier doesn't exist).
+      final ok = await _blockStore.delete(_seedKey);
+      if (!ok) failedTiers.add('blockStore');
+    } catch (_) {
+      failedTiers.add('blockStore');
+    }
+    if (failedTiers.isNotEmpty) throw IdentityClearIncomplete(failedTiers);
   }
+}
+
+/// Thrown by [IdentityStore.clear] when one or more storage tiers could not
+/// confirm deletion of the seed. [tiers] names the failed tiers
+/// (`'local'`, `'cloud'`, `'blockStore'`). The other tiers were still
+/// attempted; retrying [IdentityStore.clear] is safe (deletes are idempotent).
+class IdentityClearIncomplete implements Exception {
+  final List<String> tiers;
+  const IdentityClearIncomplete(this.tiers);
+  @override
+  String toString() => 'IdentityClearIncomplete: ${tiers.join(", ")}';
 }

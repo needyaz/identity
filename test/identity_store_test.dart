@@ -23,6 +23,9 @@ class FakeSecureStorage implements FlutterSecureStorage {
   /// When set, write throws this.
   Object? throwOnWrite;
 
+  /// When set, delete throws this.
+  Object? throwOnDelete;
+
   /// When non-null, read() answers from this queue (front first) instead of
   /// [store] — lets a test model "empty on first read, present on retry".
   List<String?>? readQueue;
@@ -85,6 +88,7 @@ class FakeSecureStorage implements FlutterSecureStorage {
     MacOsOptions? mOptions,
     WindowsOptions? wOptions,
   }) async {
+    if (throwOnDelete != null) throw throwOnDelete!;
     store.remove(key);
   }
 
@@ -100,6 +104,10 @@ class FakeBlockStore extends BlockStoreClient {
   Object? throwOnGet;
   List<String?>? getQueue;
   int getCount = 0;
+
+  /// When false, delete() reports failure the way the real client does —
+  /// by returning false, not throwing.
+  bool deleteResult = true;
 
   @override
   Future<String?> get(String key) async {
@@ -118,6 +126,7 @@ class FakeBlockStore extends BlockStoreClient {
 
   @override
   Future<bool> delete(String key) async {
+    if (!deleteResult) return false;
     store.remove(key);
     return true;
   }
@@ -309,6 +318,70 @@ void main() {
       cloud.store['acme.seed'] = seedB64;
       block.store['acme.seed'] = seedB64;
       await storeOn(android: true).clear();
+      expect(local.store, isEmpty);
+      expect(cloud.store, isEmpty);
+      expect(block.store, isEmpty);
+    });
+
+    test('cloud delete failure still wipes the other tiers and throws '
+        'IdentityClearIncomplete — a locked iCloud tier must not silently '
+        'keep the seed alive', () async {
+      local.store['acme.seed'] = seedB64;
+      cloud.store['acme.seed'] = seedB64;
+      block.store['acme.seed'] = seedB64;
+      cloud.throwOnDelete = Exception('keychain locked');
+      await expectLater(
+        storeOn(android: true).clear(),
+        throwsA(isA<IdentityClearIncomplete>()
+            .having((e) => e.tiers, 'tiers', ['cloud'])),
+      );
+      expect(local.store, isEmpty);
+      expect(block.store, isEmpty);
+    });
+
+    test('local delete failure does not short-circuit the cloud tiers',
+        () async {
+      local.store['acme.seed'] = seedB64;
+      cloud.store['acme.seed'] = seedB64;
+      block.store['acme.seed'] = seedB64;
+      local.throwOnDelete = Exception('keystore bad state');
+      await expectLater(
+        storeOn(android: true).clear(),
+        throwsA(isA<IdentityClearIncomplete>()
+            .having((e) => e.tiers, 'tiers', ['local'])),
+      );
+      expect(cloud.store, isEmpty);
+      expect(block.store, isEmpty);
+    });
+
+    test('Block Store false return counts as a failed tier', () async {
+      block.store['acme.seed'] = seedB64;
+      block.deleteResult = false;
+      await expectLater(
+        storeOn(android: true).clear(),
+        throwsA(isA<IdentityClearIncomplete>()
+            .having((e) => e.tiers, 'tiers', ['blockStore'])),
+      );
+    });
+
+    test('collects every failed tier, and a retry after the failures resolve '
+        'succeeds (deletes are idempotent)', () async {
+      local.store['acme.seed'] = seedB64;
+      cloud.store['acme.seed'] = seedB64;
+      block.store['acme.seed'] = seedB64;
+      local.throwOnDelete = Exception('a');
+      cloud.throwOnDelete = Exception('b');
+      block.deleteResult = false;
+      final store = storeOn(android: true);
+      await expectLater(
+        store.clear(),
+        throwsA(isA<IdentityClearIncomplete>()
+            .having((e) => e.tiers, 'tiers', ['local', 'cloud', 'blockStore'])),
+      );
+      local.throwOnDelete = null;
+      cloud.throwOnDelete = null;
+      block.deleteResult = true;
+      await store.clear();
       expect(local.store, isEmpty);
       expect(cloud.store, isEmpty);
       expect(block.store, isEmpty);

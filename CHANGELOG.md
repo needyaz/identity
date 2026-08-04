@@ -1,3 +1,14 @@
+## 0.3.0
+
+- **`IdentityStore.clear()` no longer swallows per-tier delete failures.**
+  Previously a locked/offline cloud tier during account deletion silently kept
+  the seed alive there; the next `load()` would find it, promote it back to
+  local, and resurrect the "deleted" identity. `clear()` now attempts every
+  tier unconditionally (a Block Store `false` return counts as a failure) and
+  throws the new `IdentityClearIncomplete(tiers)` naming the tiers that could
+  not confirm deletion. **Breaking** for callers that assumed `clear()` never
+  throws; deletes are idempotent, so retry on catch.
+
 ## 0.2.0
 
 - **`Identity.seed` is now a `SecureKey`** (locked, zeroed-on-dispose memory)

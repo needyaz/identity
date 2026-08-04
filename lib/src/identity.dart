@@ -11,12 +11,25 @@ import 'package:sodium/sodium.dart';
 /// [keyPair.secretKey] and [keyPair.publicKey] are derived from the seed and
 /// are never stored independently.
 /// [uid] is derived deterministically from the public key.
+///
+/// [seed] is [SecureKey]-wrapped: every *derived* key here (backup key,
+/// signing key) already lives in locked, zeroed-on-dispose memory, and the
+/// root seed — from which all of them plus the identity keypair descend — is
+/// the one thing most worth protecting the same way. Left as a plain
+/// [Uint8List] it would sit in GC-managed memory for the entire app session,
+/// so a memory read that found nothing in the wrapped derived keys could still
+/// recover the live seed and with it everything derived from it.
+///
+/// Use [SecureKey.extractBytes] only where the raw bytes are genuinely needed
+/// (persisting to secure storage, rendering the recovery phrase) — a
+/// deliberate, momentary materialization, never a retained copy.
 class Identity {
-  final Uint8List seed;
+  final SecureKey seed;
   final KeyPair keyPair;
   final String uid;
 
-  const Identity({
+  // Not const: SecureKey wraps native mprotect'd memory.
+  Identity({
     required this.seed,
     required this.keyPair,
     required this.uid,
@@ -59,7 +72,12 @@ Identity _identityFromSeed(Sodium sodium, Uint8List seed) {
   final secureKey = SecureKey.fromList(sodium, seed);
   final kp = sodium.crypto.box.seedKeyPair(secureKey);
   final uid = _deriveUid(kp.publicKey);
-  return Identity(seed: seed, keyPair: kp, uid: uid);
+  // Retain the SecureKey wrapper, not the `seed` parameter — the point is that
+  // no plain Uint8List of the seed stays alive for the session. `seed` still
+  // exists briefly here (SecureKey.fromList copies from it, and Dart can't
+  // reach back to zero a source buffer), but nothing retains it past this
+  // function returning.
+  return Identity(seed: secureKey, keyPair: kp, uid: uid);
 }
 
 /// SHA-256(publicKey)[0..15], lowercase hex.

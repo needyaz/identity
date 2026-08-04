@@ -101,7 +101,8 @@ void main() {
       // Python hashlib.blake2b (keyed BLAKE2b == libsodium crypto_generichash),
       // so this pins the derivation against a second implementation, not
       // against itself. Any server verifier must reproduce these exactly.
-      final seed = Uint8List.fromList(List<int>.generate(32, (i) => i));
+      final seed = SecureKey.fromList(
+          sodium, Uint8List.fromList(List<int>.generate(32, (i) => i)));
       // 15-byte domain — exercises the right-pad-to-16 branch. Also doubles as
       // the secretbox_decrypt vector key in crypto_vectors.json.
       final padded = deriveBackupKey(sodium, seed, domain: 'identity-pad-v1');
@@ -144,7 +145,8 @@ void main() {
       // keyed-BLAKE2b ed-seed stage, cryptography's Ed25519 for seed -> public
       // key), so this pins the derivation against a second implementation.
       // Any server verifier must reproduce this exactly.
-      final seed = Uint8List.fromList(List<int>.generate(32, (i) => i));
+      final seed = SecureKey.fromList(
+          sodium, Uint8List.fromList(List<int>.generate(32, (i) => i)));
       final kp =
           deriveSigningKeyPair(sodium, seed, domain: 'identity-spec-signing-v1');
       expect(_hex(kp.publicKey),

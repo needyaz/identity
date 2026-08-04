@@ -241,7 +241,9 @@ class IdentityStore {
       }
       if (exists) throw const IdentityAlreadyExistsException();
     }
-    final encoded = base64.encode(identity.seed);
+    // extractBytes() is a deliberate one-off materialization to persist the
+    // seed, not a session-long copy — see [Identity.seed].
+    final encoded = base64.encode(identity.seed.extractBytes());
     // Local copy — always written first.
     await _local.write(key: _seedKey, value: encoded);
     debugPrint('[IdentityStore] save: local write ok');

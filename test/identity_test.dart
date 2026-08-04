@@ -17,11 +17,11 @@ void main() {
   test('generate → seed → mnemonic → recover is stable', () {
     final id = generateIdentity(sodium);
 
-    final fromSeed = identityFromSeed(sodium, id.seed);
+    final fromSeed = identityFromSeed(sodium, id.seed.extractBytes());
     expect(fromSeed.uid, id.uid);
     expect(fromSeed.keyPair.publicKey, equals(id.keyPair.publicKey));
 
-    final phrase = seedToMnemonic(id.seed);
+    final phrase = seedToMnemonic(id.seed.extractBytes());
     expect(phrase.split(' ').length, 24);
 
     final recovered = identityFromMnemonic(sodium, phrase);

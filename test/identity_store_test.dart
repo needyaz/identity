@@ -262,7 +262,7 @@ void main() {
       local.store['acme.seed'] = seedB64;
       final id = await storeOn(android: true).load(sodium);
       expect(id, isNotNull);
-      expect(id!.seed, equals(seed));
+      expect(id!.seed.extractBytes(), equals(seed));
       await pumpEventQueue(); // let the fire-and-forget backfill run
       expect(cloud.store['acme.seed'], seedB64);
       expect(block.store['acme.seed'], seedB64);
@@ -271,14 +271,14 @@ void main() {
     test('local miss + iCloud hit promotes the seed to local', () async {
       cloud.store['acme.seed'] = seedB64;
       final id = await storeOn(android: false).load(sodium);
-      expect(id!.seed, equals(seed));
+      expect(id!.seed.extractBytes(), equals(seed));
       expect(local.store['acme.seed'], seedB64);
     });
 
     test('iCloud empty on first read, found on retry (sync lag)', () async {
       cloud.readQueue = [null, seedB64];
       final id = await storeOn(android: false).load(sodium);
-      expect(id!.seed, equals(seed));
+      expect(id!.seed.extractBytes(), equals(seed));
       expect(cloud.readCount, 2);
       expect(local.store['acme.seed'], seedB64);
     });
@@ -286,7 +286,7 @@ void main() {
     test('Block Store empty on first read, found on retry (Android)', () async {
       block.getQueue = [null, seedB64];
       final id = await storeOn(android: true).load(sodium);
-      expect(id!.seed, equals(seed));
+      expect(id!.seed.extractBytes(), equals(seed));
       expect(local.store['acme.seed'], seedB64);
     });
 
@@ -294,7 +294,7 @@ void main() {
       local.throwOnRead = Exception('keystore bad state');
       block.store['acme.seed'] = seedB64;
       final id = await storeOn(android: true).load(sodium);
-      expect(id!.seed, equals(seed));
+      expect(id!.seed.extractBytes(), equals(seed));
     });
 
     test('returns null when no tier has a seed', () async {

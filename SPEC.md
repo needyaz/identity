@@ -7,7 +7,11 @@ must match this byte-for-byte.
 ## Identity
 
 - **Seed** — 32 random bytes. The canonical secret; everything else derives from
-  it. Stored in the platform secure enclave; never transmitted.
+  it. Stored in the platform secure enclave; never transmitted. Held in memory
+  as a libsodium `SecureKey` (locked, zeroed on dispose), never as a plain
+  byte list for the life of a session; the derivations below briefly unlock it
+  in place. Raw bytes are materialized only to persist the seed or render the
+  recovery phrase.
 - **Keypair** — X25519 (`crypto_box`) seed-keypair derived from the seed.
 - **uid** — `SHA-256(boxPublicKey)[0..15]` as 32-char lowercase hex.
 - **Recovery phrase** — BIP39, 24 words encoding the 32-byte seed (standard

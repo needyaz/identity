@@ -110,7 +110,8 @@ await store.save(identity);            // refuses to clobber an existing seed
 final backupKey = deriveBackupKey(
   sodium, identity.seed, domain: acmeIdentity.backupKeyDomain,
 );
-final phrase = seedToMnemonic(identity.seed);   // 24-word recovery phrase
+// identity.seed is a SecureKey — extract only where raw bytes are needed:
+final phrase = seedToMnemonic(identity.seed.extractBytes());  // 24-word phrase
 ```
 
 ## Native requirement (Android only)

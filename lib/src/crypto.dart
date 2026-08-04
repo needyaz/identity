@@ -39,9 +39,14 @@ PrecalculatedBox deriveSharedSecret(
 /// Any server verifier that re-derives this key must use the same [domain].
 /// Short domains are right-padded to libsodium's 16-byte key minimum, matching
 /// the origin app's shipped derivation byte-for-byte.
+///
+/// [seed] is a [SecureKey]: `genericHash`'s message parameter only accepts a
+/// plain [Uint8List], so the seed's protected memory is briefly unlocked via
+/// `runUnlockedSync` for the duration of the hash and re-locked immediately
+/// after — a scoped view, not a separate untracked copy.
 SecureKey deriveBackupKey(
   Sodium sodium,
-  Uint8List seed, {
+  SecureKey seed, {
   required String domain,
 }) {
   final domainBytes = utf8.encode(domain);
@@ -50,11 +55,11 @@ SecureKey deriveBackupKey(
       ? Uint8List.fromList(domainBytes)
       : (Uint8List(16)..setAll(0, domainBytes));
   final keyParam = SecureKey.fromList(sodium, keyBytes);
-  final hash = sodium.crypto.genericHash(
-    message: seed,
-    outLen: 32,
-    key: keyParam,
-  );
+  final hash = seed.runUnlockedSync((seedBytes) => sodium.crypto.genericHash(
+        message: seedBytes,
+        outLen: 32,
+        key: keyParam,
+      ));
   keyParam.dispose();
   return SecureKey.fromList(sodium, hash);
 }
@@ -108,6 +113,20 @@ String encryptBlobWithBox(Sodium sodium, Object data, PrecalculatedBox box) {
   return base64.encode(combined);
 }
 
+/// Same as [encryptBlobWithBox], but disposes [box] on every path — success or
+/// a throw. A bare `encryptBlobWithBox(...)` followed by a separate
+/// `box.dispose()` statement skips the dispose when encrypt throws, leaking the
+/// derived shared secret to the GC instead of wiping it deterministically.
+/// Prefer this whenever the box exists only for this one call.
+String encryptBlobWithBoxDisposing(
+    Sodium sodium, Object data, PrecalculatedBox box) {
+  try {
+    return encryptBlobWithBox(sodium, data, box);
+  } finally {
+    box.dispose();
+  }
+}
+
 /// Decrypt a blob produced by [encryptBlobWithBox]. Throws [SodiumException] on auth failure.
 /// Returns the decoded JSON value — a `Map<String, dynamic>` or `List` depending
 /// on what was encrypted; callers cast explicitly.
@@ -118,6 +137,20 @@ Object decryptBlobWithBox(Sodium sodium, String encoded, PrecalculatedBox box) {
   final ciphertext = combined.sublist(nonceLen);
   final plaintext = box.openEasy(cipherText: ciphertext, nonce: nonce);
   return jsonDecode(utf8.decode(plaintext)) as Object;
+}
+
+/// Same as [decryptBlobWithBox], but disposes [box] on every path — success or
+/// the [SodiumException] a tampered or replayed payload's MAC failure raises.
+/// The throw path is the one a caller is most likely to forget, and it is
+/// exactly the path an attacker controls, so prefer this whenever the box
+/// exists only for this one call.
+Object decryptBlobWithBoxDisposing(
+    Sodium sodium, String encoded, PrecalculatedBox box) {
+  try {
+    return decryptBlobWithBox(sodium, encoded, box);
+  } finally {
+    box.dispose();
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -182,18 +215,21 @@ Uint8List? openSealedBytes(Sodium sodium, String sealedB64, KeyPair keyPair) {
 /// Deterministic: the same seed + domain always yields the same keypair, so it
 /// reconstructs from the BIP39 phrase like the box key does. [domain] must be
 /// within libsodium's generic-hash key range (16..64 bytes UTF-8).
+///
+/// [seed] is a [SecureKey] — see [deriveBackupKey] for why the unlock is scoped
+/// via `runUnlockedSync` rather than taking a plain [Uint8List].
 KeyPair deriveSigningKeyPair(
   Sodium sodium,
-  Uint8List seed, {
+  SecureKey seed, {
   required String domain,
 }) {
   final keyParam =
       SecureKey.fromList(sodium, Uint8List.fromList(utf8.encode(domain)));
-  final edSeed = sodium.crypto.genericHash(
-    message: seed,
-    outLen: sodium.crypto.sign.seedBytes,
-    key: keyParam,
-  );
+  final edSeed = seed.runUnlockedSync((seedBytes) => sodium.crypto.genericHash(
+        message: seedBytes,
+        outLen: sodium.crypto.sign.seedBytes,
+        key: keyParam,
+      ));
   keyParam.dispose();
   final secureSeed = SecureKey.fromList(sodium, edSeed);
   final keyPair = sodium.crypto.sign.seedKeyPair(secureSeed);

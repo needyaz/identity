@@ -79,8 +79,11 @@ class BlockStoreClient {
   /// Deletes the entry under [key]. Returns true if the call succeeded
   /// (including the case where the key didn't exist).
   /// Retries once on timeout (Play Services tasks can hang transiently on
-  /// AVDs/cold boots); logs a warning via [print] (not debugPrint) so that
-  /// a persistent timeout surfaces in crash logs even in release builds.
+  /// AVDs/cold boots), logging through [debugPrint] like every other call site
+  /// here. This used to be a deliberate `print()` bypass so a persistent
+  /// timeout would surface in release logs — a permanent hole in a host app's
+  /// "no console output in release builds" guarantee, for no benefit: [key] is
+  /// never more than a constant label.
   Future<bool> delete(String key) async {
     if (!_isAndroid) return true;
     for (var attempt = 0; attempt < 2; attempt++) {
@@ -89,8 +92,7 @@ class BlockStoreClient {
             .invokeMethod<bool>('delete', {'key': key}).timeout(_kTimeout);
         return ok ?? false;
       } on TimeoutException {
-        // ignore: avoid_print
-        print('[BlockStore] delete($key) timed out (attempt ${attempt + 1})');
+        debugPrint('[BlockStore] delete($key) timed out (attempt ${attempt + 1})');
         // Fall through to retry on attempt 0; return false on attempt 1.
       } catch (e) {
         debugPrint('[BlockStore] delete($key) failed: $e');

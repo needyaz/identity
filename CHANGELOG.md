@@ -1,3 +1,14 @@
+## 0.4.0
+
+- Added an optional `onSeedAcquired` callback to `IdentityStore`'s constructor
+  (default null — no behavior change). Fires when the device NEWLY comes to
+  hold the seed: after `save()`'s local write succeeds (before the best-effort
+  cloud mirrors) and after a cloud-tier restore in `load()` is promoted to
+  local — never on the local-hit fast path or the fire-and-forget cloud
+  backfill. Lets a host reset "the seed was wiped" bookkeeping (e.g. a native
+  wipe latch) exactly when key material legitimately (re)appears, without
+  forking the class. Synchronous; must not throw.
+
 ## 0.3.0
 
 - **`IdentityStore.clear()` no longer swallows per-tier delete failures.**

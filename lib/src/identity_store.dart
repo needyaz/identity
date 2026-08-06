@@ -57,11 +57,21 @@ class IdentitySeedPresenceUnknown implements Exception {
 class IdentityStore {
   final IdentityConfig config;
 
-  /// The optional parameters are a test seam: production callers use
-  /// `IdentityStore(config)` and get exactly the shipped behavior (platform
-  /// secure storage, real platform detection, 2 s cloud-sync retry waits).
-  /// Tests inject fakes to exercise the tier/tri-state decision logic on the
-  /// host, including the Android arms.
+  /// The optional storage/platform parameters are a test seam: production
+  /// callers use `IdentityStore(config)` and get exactly the shipped behavior
+  /// (platform secure storage, real platform detection, 2 s cloud-sync retry
+  /// waits). Tests inject fakes to exercise the tier/tri-state decision logic
+  /// on the host, including the Android arms.
+  ///
+  /// [onSeedAcquired] fires when this device NEWLY comes to hold the seed:
+  /// after [save]'s local write succeeds (before the best-effort cloud
+  /// mirrors), and after a cloud-tier restore in [load] promotes the seed to
+  /// local (iCloud Keychain or Block Store) — never on [load]'s local-hit fast
+  /// path, so an ordinary same-device read stays observation-free. That
+  /// distinction is the point: it lets a host reset "the seed was wiped"
+  /// bookkeeping (e.g. a native wipe latch) exactly when key material
+  /// legitimately (re)appears. Synchronous and must not throw — a throw
+  /// propagates to the [save]/[load] caller.
   IdentityStore(
     this.config, {
     FlutterSecureStorage? local,
@@ -69,11 +79,13 @@ class IdentityStore {
     BlockStoreClient? blockStore,
     bool? isAndroid,
     Duration syncRetryDelay = const Duration(seconds: 2),
+    void Function()? onSeedAcquired,
   })  : _local = local ?? _defaultLocal,
         _cloud = cloud ?? _defaultCloud,
         _blockStore = blockStore ?? BlockStoreClient(config.blockStoreChannel),
         _isAndroid = isAndroid ?? Platform.isAndroid,
-        _syncRetryDelay = syncRetryDelay;
+        _syncRetryDelay = syncRetryDelay,
+        _onSeedAcquired = onSeedAcquired;
 
   String get _seedKey => config.seedStorageKey;
 
@@ -106,6 +118,7 @@ class IdentityStore {
 
   final bool _isAndroid;
   final Duration _syncRetryDelay;
+  final void Function()? _onSeedAcquired;
 
   /// Returns true if the identity seed is present in the cloud backup tier:
   /// Block Store on Android, iCloud Keychain on iOS.
@@ -183,6 +196,7 @@ class IdentityStore {
           debugPrint('[IdentityStore] load: restored from iCloud Keychain'
               ' (attempt ${attempt + 1})');
           await _local.write(key: _seedKey, value: cloudB64);
+          _onSeedAcquired?.call();
           return identityFromSeed(
               sodium, Uint8List.fromList(base64.decode(cloudB64)));
         }
@@ -213,6 +227,7 @@ class IdentityStore {
       }
       if (blockB64 != null) {
         await _local.write(key: _seedKey, value: blockB64);
+        _onSeedAcquired?.call();
         return identityFromSeed(sodium, Uint8List.fromList(base64.decode(blockB64)));
       }
     }
@@ -247,6 +262,9 @@ class IdentityStore {
     // Local copy — always written first.
     await _local.write(key: _seedKey, value: encoded);
     debugPrint('[IdentityStore] save: local write ok');
+    // The device now holds the seed — fires before the best-effort cloud
+    // mirrors, which may fail without un-acquiring anything.
+    _onSeedAcquired?.call();
     // iCloud copy — iOS only in practice (no-op on Android); best effort.
     try {
       await _cloud.write(key: _seedKey, value: encoded);

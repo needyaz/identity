@@ -312,6 +312,94 @@ void main() {
     });
   });
 
+  group('onSeedAcquired hook', () {
+    // The load-bearing contract: fires exactly when the device NEWLY comes to
+    // hold the seed (fresh save, cloud-tier restore), never on an ordinary
+    // same-device read — so a host can reset wipe-latch bookkeeping without
+    // every app launch counting as an acquisition.
+    IdentityStore hookedStore({required bool android, required void Function() hook}) =>
+        IdentityStore(
+          _config,
+          local: local,
+          cloud: cloud,
+          blockStore: block,
+          isAndroid: android,
+          syncRetryDelay: Duration.zero,
+          onSeedAcquired: hook,
+        );
+
+    test('save: fires once, after the local write, before the cloud mirrors',
+        () async {
+      var fired = 0;
+      String? localAtFire, cloudAtFire, blockAtFire;
+      final store = hookedStore(
+        android: true,
+        hook: () {
+          fired++;
+          localAtFire = local.store['acme.seed'];
+          cloudAtFire = cloud.store['acme.seed'];
+          blockAtFire = block.store['acme.seed'];
+        },
+      );
+      await store.save(identityFromSeed(sodium, seed));
+      expect(fired, 1);
+      expect(localAtFire, seedB64, reason: 'local write precedes the hook');
+      expect(cloudAtFire, isNull, reason: 'cloud mirrors follow the hook');
+      expect(blockAtFire, isNull, reason: 'Block Store follows the hook');
+    });
+
+    test('save: does NOT fire when the local write fails', () async {
+      local.throwOnWrite = Exception('keystore bad state');
+      var fired = 0;
+      final store = hookedStore(android: false, hook: () => fired++);
+      await expectLater(
+          store.save(identityFromSeed(sodium, seed)), throwsA(anything));
+      expect(fired, 0);
+    });
+
+    test('load: does NOT fire on the local-hit fast path', () async {
+      local.store['acme.seed'] = seedB64;
+      var fired = 0;
+      final store = hookedStore(android: true, hook: () => fired++);
+      expect(await store.load(sodium), isNotNull);
+      await pumpEventQueue(); // the fire-and-forget cloud backfill must not fire it
+      expect(fired, 0);
+    });
+
+    test('load: fires once after an iCloud restore is promoted to local',
+        () async {
+      cloud.store['acme.seed'] = seedB64;
+      var fired = 0;
+      String? localAtFire;
+      final store = hookedStore(
+        android: false,
+        hook: () {
+          fired++;
+          localAtFire = local.store['acme.seed'];
+        },
+      );
+      expect(await store.load(sodium), isNotNull);
+      expect(fired, 1);
+      expect(localAtFire, seedB64, reason: 'promotion precedes the hook');
+    });
+
+    test('load: fires once after a Block Store restore is promoted to local '
+        '(Android)', () async {
+      block.store['acme.seed'] = seedB64;
+      var fired = 0;
+      final store = hookedStore(android: true, hook: () => fired++);
+      expect(await store.load(sodium), isNotNull);
+      expect(fired, 1);
+    });
+
+    test('load: does NOT fire when no tier has a seed', () async {
+      var fired = 0;
+      final store = hookedStore(android: true, hook: () => fired++);
+      expect(await store.load(sodium), isNull);
+      expect(fired, 0);
+    });
+  });
+
   group('clear / isCloudBackedUp', () {
     test('clear wipes every tier', () async {
       local.store['acme.seed'] = seedB64;

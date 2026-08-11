@@ -9,6 +9,10 @@ import 'package:sodium/sodium.dart';
 import 'block_store_client.dart';
 import 'identity.dart';
 import 'identity_config.dart';
+import 'kv_tier.dart';
+import 'secure_kv_store.dart';
+import 'storage_read.dart';
+import 'tier_policy.dart';
 
 /// Thrown by [IdentityStore.save] when a seed already exists and `force` was not
 /// set — the guard that makes new-identity creation non-destructive.
@@ -54,6 +58,12 @@ class IdentitySeedPresenceUnknown implements Exception {
 /// item is absent, the cloud tier (iCloud Keychain on iOS, Block Store on
 /// Android) is consulted and — if found — promoted to local storage so
 /// subsequent reads are fast.
+///
+/// The tier orchestration itself lives in the generic [SecureKvStore]; this
+/// class supplies the seed-specific policy (tier order, cloud-sync retry,
+/// tier names) and the identity-specific contracts on top: the
+/// [IdentitySeedPresenceUnknown] tri-state, the [save] clobber guard, and
+/// the [onSeedAcquired] hook.
 class IdentityStore {
   final IdentityConfig config;
 
@@ -120,6 +130,26 @@ class IdentityStore {
   final Duration _syncRetryDelay;
   final void Function()? _onSeedAcquired;
 
+  static const _localTier = 'local';
+  static const _cloudTier = 'cloud';
+  static const _blockStoreTier = 'blockStore';
+
+  /// The seed's tier policy: local first, then the cloud tiers, with the
+  /// cloud-sync-lag retry on both cloud tiers (iCloud Keychain sync and Block
+  /// Store cloud sync can lag right after install; only true-new installs —
+  /// no seed anywhere — pay the extra waits). Block Store is Android-armed.
+  /// The tier names are load-bearing: they surface verbatim in
+  /// [IdentityClearIncomplete.tiers].
+  late final SecureKvStore _kv = SecureKvStore(TierPolicy(
+    tiers: [
+      SecureStorageTier(_localTier, _local),
+      SecureStorageTier(_cloudTier, _cloud),
+      BlockStoreTier(_blockStore, available: _isAndroid),
+    ],
+    retryDelay: _syncRetryDelay,
+    retryTiers: const {_cloudTier, _blockStoreTier},
+  ));
+
   /// Returns true if the identity seed is present in the cloud backup tier:
   /// Block Store on Android, iCloud Keychain on iOS.
   Future<bool> isCloudBackedUp() async {
@@ -139,101 +169,45 @@ class IdentityStore {
   /// established user to onboarding, and save() lets a new seed clobber the
   /// real one.
   Future<bool> hasIdentity() async {
-    Object? firstFailure;
-    try {
-      if (await _local.containsKey(key: _seedKey)) return true;
-    } catch (e) {
-      firstFailure = e;
-    }
-    try {
-      if (await _cloud.containsKey(key: _seedKey)) return true;
-    } catch (e) {
-      firstFailure ??= e;
-    }
-    if (_isAndroid) {
-      try {
-        if (await _blockStore.get(_seedKey) != null) return true;
-      } catch (e) {
-        firstFailure ??= e;
-      }
-    }
-    if (firstFailure != null) throw IdentitySeedPresenceUnknown(firstFailure);
-    return false;
+    return switch (await _kv.containsKey(_seedKey)) {
+      Present(value: true) => true,
+      Present() => false,
+      Absent() => false,
+      Unavailable(:final cause) => throw IdentitySeedPresenceUnknown(cause),
+    };
   }
 
   /// Load and reconstruct identity from the stored seed.
   /// Returns null if no identity has been saved yet.
+  ///
+  /// Note: an `Unavailable` read (no tier produced a seed AND at least one
+  /// tier failed) also returns null — the shipped contract. The launch gate
+  /// must consult [hasIdentity] (which throws [IdentitySeedPresenceUnknown]
+  /// in that situation) before treating a null here as "new user".
   Future<Identity?> load(Sodium sodium) async {
-    // Fast path: local store (same device, always available).
-    // Wrapped in try/catch because EncryptedSharedPreferences can throw on
-    // Android if the Keystore key is in a bad state (invalidated after a
-    // security-policy change, corrupted during an OS update, etc.). Without
-    // this guard the exception would propagate and skip the Block Store tier.
-    String? localB64;
-    try {
-      localB64 = await _local.read(key: _seedKey);
-    } catch (e) {
-      debugPrint('[IdentityStore] local read failed: $e');
-    }
-    if (localB64 != null) {
-      debugPrint('[IdentityStore] load: found in local storage');
-      // Fire-and-forget: write cloud copies for users who predate the cloud tiers.
-      unawaited(_ensureCloudCopies(localB64));
-      return identityFromSeed(sodium, Uint8List.fromList(base64.decode(localB64)));
-    }
-    debugPrint('[IdentityStore] load: local empty, trying cloud tiers');
-
-    // iOS restore path: iCloud Keychain (new device, same Apple ID). iCloud
-    // Keychain sync can lag for a few seconds right after install, so a single
-    // read can miss a seed that is about to land. Try once, then retry after a
-    // short wait — mirrors the Block Store retry below. Only true-new installs
-    // (no seed anywhere) pay the extra wait; an established device with a local
-    // seed never reaches this path.
-    for (var attempt = 0; attempt < 2; attempt++) {
-      try {
-        final cloudB64 = await _cloud.read(key: _seedKey);
-        if (cloudB64 != null) {
-          debugPrint('[IdentityStore] load: restored from iCloud Keychain'
-              ' (attempt ${attempt + 1})');
-          await _local.write(key: _seedKey, value: cloudB64);
+    switch (await _kv.read(_seedKey)) {
+      case Present(:final value, :final tier):
+        if (tier == _localTier) {
+          debugPrint('[IdentityStore] load: found in local storage');
+          // Fire-and-forget: write cloud copies for users who predate the
+          // cloud tiers.
+          unawaited(_kv.mirror(_seedKey, value));
+        } else {
+          // Cloud-tier restore, already promoted to local by the kv layer —
+          // this device newly holds the seed.
+          debugPrint('[IdentityStore] load: restored from $tier');
           _onSeedAcquired?.call();
-          return identityFromSeed(
-              sodium, Uint8List.fromList(base64.decode(cloudB64)));
         }
-      } catch (e) {
-        debugPrint('[IdentityStore] iCloud read failed (attempt'
-            ' ${attempt + 1}): $e');
-      }
-      if (attempt == 0) {
-        debugPrint('[IdentityStore] load: iCloud empty, waiting 2 s for sync…');
-        await Future<void>.delayed(_syncRetryDelay);
-      }
+        return identityFromSeed(
+            sodium, Uint8List.fromList(base64.decode(value)));
+      case Absent():
+        debugPrint('[IdentityStore] load: no identity found on any tier');
+        return null;
+      case Unavailable(:final cause):
+        debugPrint('[IdentityStore] load: no tier produced a seed and at '
+            'least one read failed: $cause');
+        return null;
     }
-
-    // Android restore path: Block Store (same device reinstall or new device
-    // on the same Google account). Block Store cloud sync has a documented
-    // delay — data may not be available immediately after reinstall. We try
-    // once, then retry after a short wait to give the cloud sync time to land.
-    if (_isAndroid) {
-      debugPrint('[IdentityStore] load: trying Block Store (attempt 1)');
-      String? blockB64 = await _blockStore.get(_seedKey);
-      if (blockB64 == null) {
-        debugPrint('[IdentityStore] load: Block Store empty, waiting 2 s for cloud sync…');
-        await Future<void>.delayed(_syncRetryDelay);
-        blockB64 = await _blockStore.get(_seedKey);
-        debugPrint('[IdentityStore] load: Block Store retry: ${blockB64 != null ? 'found' : 'still empty'}');
-      } else {
-        debugPrint('[IdentityStore] load: restored from Block Store');
-      }
-      if (blockB64 != null) {
-        await _local.write(key: _seedKey, value: blockB64);
-        _onSeedAcquired?.call();
-        return identityFromSeed(sodium, Uint8List.fromList(base64.decode(blockB64)));
-      }
-    }
-
-    debugPrint('[IdentityStore] load: no identity found on any tier');
-    return null;
   }
 
   /// Save the identity seed to secure storage.
@@ -248,52 +222,25 @@ class IdentityStore {
   /// Throws [IdentityAlreadyExistsException] when a seed exists and !force.
   Future<void> save(Identity identity, {bool force = false}) async {
     if (!force) {
-      bool exists;
-      try {
-        exists = await hasIdentity();
-      } catch (_) {
-        exists = true; // fail safe: cannot confirm absence → do not overwrite.
-      }
+      final exists = switch (await _kv.containsKey(_seedKey)) {
+        Present(value: false) => false,
+        Absent() => false,
+        // Present(true), or Unavailable: fail safe — never overwrite on doubt.
+        _ => true,
+      };
       if (exists) throw const IdentityAlreadyExistsException();
     }
     // extractBytes() is a deliberate one-off materialization to persist the
     // seed, not a session-long copy — see [Identity.seed].
     final encoded = base64.encode(identity.seed.extractBytes());
-    // Local copy — always written first.
-    await _local.write(key: _seedKey, value: encoded);
-    debugPrint('[IdentityStore] save: local write ok');
-    // The device now holds the seed — fires before the best-effort cloud
-    // mirrors, which may fail without un-acquiring anything.
-    _onSeedAcquired?.call();
-    // iCloud copy — iOS only in practice (no-op on Android); best effort.
-    try {
-      await _cloud.write(key: _seedKey, value: encoded);
-      debugPrint('[IdentityStore] save: cloud write ok');
-    } catch (e) {
-      debugPrint('[IdentityStore] save: cloud write failed: $e');
-    }
-    // Block Store copy — Android only; best effort. BlockStoreClient.put
-    // already no-ops on non-Android.
-    final blockOk = await _blockStore.put(_seedKey, encoded);
-    if (_isAndroid) {
-      debugPrint('[IdentityStore] save: Block Store put: $blockOk');
-    }
-  }
-
-  // Silently write cloud copies (iCloud + Block Store) if not already present.
-  // Called from the load() fast-path so existing users get their seed mirrored
-  // on first launch after the feature ships.
-  Future<void> _ensureCloudCopies(String encoded) async {
-    try {
-      if (!await _cloud.containsKey(key: _seedKey)) {
-        await _cloud.write(key: _seedKey, value: encoded);
-      }
-    } catch (e) {
-      debugPrint('[IdentityStore] iCloud sync failed: $e');
-    }
-    if (_isAndroid && await _blockStore.get(_seedKey) == null) {
-      await _blockStore.put(_seedKey, encoded);
-    }
+    // Local write is required (a failure rethrows and nothing else runs);
+    // the iCloud / Block Store mirrors are best-effort.
+    await _kv.write(_seedKey, encoded, onPrimaryWrite: () {
+      debugPrint('[IdentityStore] save: local write ok');
+      // The device now holds the seed — fires before the best-effort cloud
+      // mirrors, which may fail without un-acquiring anything.
+      _onSeedAcquired?.call();
+    });
   }
 
   /// Wipe the stored identity (used for reset / account deletion).
@@ -306,26 +253,11 @@ class IdentityStore {
   /// local, and resurrect the "deleted" identity. Deletes are idempotent, so
   /// callers can simply retry on catch.
   Future<void> clear() async {
-    final failedTiers = <String>[];
     try {
-      await _local.delete(key: _seedKey);
-    } catch (_) {
-      failedTiers.add('local');
+      await _kv.delete(_seedKey);
+    } on KvDeleteIncomplete catch (e) {
+      throw IdentityClearIncomplete(e.tiers);
     }
-    try {
-      await _cloud.delete(key: _seedKey);
-    } catch (_) {
-      failedTiers.add('cloud');
-    }
-    try {
-      // BlockStoreClient.delete reports failure as `false`, not a throw
-      // (and returns true on non-Android, where the tier doesn't exist).
-      final ok = await _blockStore.delete(_seedKey);
-      if (!ok) failedTiers.add('blockStore');
-    } catch (_) {
-      failedTiers.add('blockStore');
-    }
-    if (failedTiers.isNotEmpty) throw IdentityClearIncomplete(failedTiers);
   }
 }
 

@@ -1,3 +1,38 @@
+## 0.5.0
+
+- **New: generic tiered secure storage — `SecureKvStore`** (issue #1). The
+  tiering machinery that lived inside `IdentityStore` is now a reusable,
+  exported layer: `StorageRead<T>` (sealed tri-state `Present` / `Absent` /
+  `Unavailable` — an exhaustive `switch` makes "failed read treated as
+  absent" a compile-time impossibility), the pluggable `KvTier` interface
+  (with `SecureStorageTier` and `BlockStoreTier` shipped; consumers can
+  supply e.g. a legacy `SharedPreferences` tier without this package taking
+  the dependency), `TierPolicy` (ordered read chain, promote-on-read,
+  migration-only read-then-delete tiers, platform-armed tiers, cloud
+  sync-lag retry, primary-required / mirror-best-effort write fan-out,
+  per-tier promote opt-out via `noPromoteTiers` for values whose conflict
+  rule resolves above this layer),
+  `TypedKey<T>` + `readTyped`/`writeTyped` (decode failure maps to
+  `Unavailable`, never `Absent`), and `readModifyWrite` (optimistic version
+  counter — no lock, no shared queue, so a stuck caller can never wedge
+  another).
+- **New: `package:identity/testing.dart`** exports `FakeKvTier`, a
+  fault-injectable in-memory tier (per-key + wholesale read/write/delete
+  faults defaulting to a realistic locked-Keychain `PlatformException`
+  `-25308`, per-key read queues for sync-lag retries, a read gate for
+  concurrency tests) so consumer suites can exercise "one tier fails while
+  another succeeds" on the host without rewriting the fake.
+- **`IdentityStore` now sits on `SecureKvStore`.** Its public API, tier
+  order, retry behavior, tri-state `hasIdentity()` /
+  `IdentitySeedPresenceUnknown`, `save({force})` clobber guard,
+  `onSeedAcquired` timing, and `IdentityClearIncomplete` tier names are all
+  unchanged (`identity_store_test.dart` passes unmodified). One edge case
+  changed deliberately: a cloud-tier restore whose promote-write to local
+  storage fails no longer throws out of `load()` — promote failures are
+  non-fatal, `load()` returns the restored identity (the seed still lives in
+  the cloud tier; local caching is retried on the next launch), and
+  `onSeedAcquired` fires since the device is now using the seed.
+
 ## 0.4.0
 
 - Added an optional `onSeedAcquired` callback to `IdentityStore`'s constructor

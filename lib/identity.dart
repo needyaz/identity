@@ -13,3 +13,7 @@ export 'src/crypto.dart';
 export 'src/identity.dart';
 export 'src/identity_config.dart';
 export 'src/identity_store.dart';
+export 'src/kv_tier.dart';
+export 'src/secure_kv_store.dart';
+export 'src/storage_read.dart';
+export 'src/tier_policy.dart';

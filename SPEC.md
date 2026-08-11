@@ -123,3 +123,10 @@ and confirmed absent. A failed read throws `IdentitySeedPresenceUnknown` —
 "couldn't read" must never collapse into "no identity" (the root of the recurring
 re-onboard/seed-clobber class). `save()` refuses to overwrite an existing seed
 unless `force: true`.
+
+The tier orchestration is the generic `SecureKvStore` layer (sealed tri-state
+`StorageRead` results, `KvTier` chain, `TierPolicy`); `IdentityStore` is that
+layer configured with the seed's policy plus the identity-specific guards
+above. The generic layer generalizes the same invariant: `Absent` only when
+every available tier read cleanly, otherwise `Unavailable` — never
+interchangeable.

@@ -1,6 +1,6 @@
 name: identity
 description: "Shared identity, key derivation, secure-storage tiering, and crypto primitives for Luci apps."
-version: 0.4.0
+version: 0.5.0
 publish_to: 'none'
 
 environment:

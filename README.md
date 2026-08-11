@@ -67,11 +67,25 @@ what this code promises.
   and canonical-JSON encoding for byte-exact signatures.
 - **`identity.dart`** — `Identity` (seed → X25519 keypair → uid), BIP39 recovery
   phrase round-trip, and the de-linked store-binding token.
+- **`secure_kv_store.dart`** (+ `storage_read.dart`, `kv_tier.dart`,
+  `tier_policy.dart`) — generic tiered secure storage: a sealed tri-state
+  `StorageRead` result (`Present` / `Absent` / `Unavailable` — an exhaustive
+  `switch` makes "failed read treated as absent" uncompilable), a pluggable
+  `KvTier` interface (ships `SecureStorageTier` and `BlockStoreTier`;
+  consumers can add e.g. a legacy `SharedPreferences` tier without this
+  package taking the dependency), a `TierPolicy` describing read order,
+  promote-on-read, migration-only tiers, platform arming, cloud sync-lag
+  retry and write fan-out, plus `TypedKey` views and an optimistic
+  `readModifyWrite`.
 - **`identity_store.dart`** — tiered durable storage of the 32-byte seed:
   local Keychain/EncryptedSharedPreferences + iCloud Keychain (iOS) + Block
-  Store (Android). Includes the hard-won presence-unknown guard (a failed read
-  must never be treated as "no identity").
+  Store (Android), built on `SecureKvStore`. Includes the hard-won
+  presence-unknown guard (a failed read must never be treated as "no
+  identity").
 - **`block_store_client.dart`** — Android Block Store MethodChannel wrapper.
+- **`package:identity/testing.dart`** — `FakeKvTier`, a fault-injectable
+  in-memory tier for consumer test suites ("one tier fails while another
+  succeeds" on the host, no platform channels).
 
 ## Per-app namespace: `IdentityConfig`
 
@@ -113,6 +127,37 @@ final backupKey = deriveBackupKey(
 // identity.seed is a SecureKey — extract only where raw bytes are needed:
 final phrase = seedToMnemonic(identity.seed.extractBytes());  // 24-word phrase
 ```
+
+### Tiered storage for your own keys: `SecureKvStore`
+
+The tiering `IdentityStore` uses for the seed is available generically — a
+domain store reduces to a key, a codec, and a `TierPolicy`:
+
+```dart
+final kv = SecureKvStore(TierPolicy(
+  tiers: [
+    SecureStorageTier('local', localStorage),
+    SecureStorageTier('cloud', icloudStorage),
+    SecureStorageTier('legacy', legacyStorage, writable: false), // migrate-and-retire
+  ],
+  retryDelay: const Duration(seconds: 2),
+  retryTiers: const {'cloud'},
+));
+
+const profileKey = TypedKey<Profile>('acme.profile',
+    encode: encodeProfile, decode: decodeProfile);
+
+switch (await kv.readTyped(profileKey)) {
+  case Present(:final value): useProfile(value);
+  case Absent(): startOnboarding();            // confirmed: no data anywhere
+  case Unavailable(:final cause): report(cause); // couldn't read — NOT "no data"
+}
+```
+
+The `sealed` result is the point: a failed or corrupt read can't be mistaken
+for absence without the compiler objecting. For tests,
+`package:identity/testing.dart` exports `FakeKvTier` with per-key and
+wholesale fault injection.
 
 ## Native requirement (Android only)
 
@@ -172,12 +217,13 @@ flutter pub get
 flutter test
 ```
 
-Expect `All tests passed!` — 51 tests across `crypto_test.dart` (round-trips,
+Expect `All tests passed!` — 108 tests across `crypto_test.dart` (round-trips,
 failure modes, and the backup/signing known-answer vectors),
 `identity_test.dart` (identity determinism + the store-binding parity vector),
 `crypto_vectors_test.dart` (the golden-vector suite), and
-`identity_store_test.dart` / `block_store_client_test.dart` (the storage
-tier/tri-state decision logic, run against injected fakes).
+`secure_kv_store_test.dart` / `identity_store_test.dart` /
+`block_store_client_test.dart` (the storage tier/tri-state decision logic, run
+against injected fakes).
 
 ```
 flutter analyze

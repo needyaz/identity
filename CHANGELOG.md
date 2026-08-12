@@ -1,3 +1,16 @@
+## 0.6.0
+
+- **Breaking: removed `SecureKvStore.readModifyWrite` and the per-key version
+  counters backing it** (issue #2). Its last consumer moved to per-record
+  storage, and the optimistic version counter had a reproduced residual race:
+  a reader starting after another writer's synchronous version bump but
+  before that write *landed* passed its own version check and could lose the
+  concurrent write (3/6 concurrent saves lost on a real Keychain in the
+  consuming app's testing). The correct fix for list/set-shaped values is
+  per-record keys, not better concurrency control over one blob — so the API
+  is deleted rather than repaired, and no replacement is planned.
+  `readTyped`/`writeTyped` are unaffected.
+
 ## 0.5.0
 
 - **New: generic tiered secure storage — `SecureKvStore`** (issue #1). The

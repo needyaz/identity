@@ -36,17 +36,6 @@ class SecureKvStore {
 
   final TierPolicy policy;
 
-  /// Per-key optimistic version counters backing [SecureKvStoreTyped.readModifyWrite].
-  /// Bumped synchronously (before any `await`) by every mutation of the
-  /// primary tier — [write], [delete], and promote-on-read — so a
-  /// check-then-write pair with no `await` between check and write start is
-  /// race-free within an isolate.
-  final Map<String, int> _versions = {};
-
-  int _versionOf(String key) => _versions[key] ?? 0;
-
-  void _bump(String key) => _versions[key] = _versionOf(key) + 1;
-
   /// The resolved write chain: [TierPolicy.writeTiers] by name, or every
   /// writable tier in [TierPolicy.tiers] order. First entry is the primary.
   List<KvTier> get _writeChain {
@@ -116,7 +105,6 @@ class SecureKvStore {
     if (chain.isEmpty) return;
     final primary = chain.first;
     if (source.name == primary.name || !primary.available) return;
-    _bump(key);
     try {
       await primary.write(key, value);
       debugPrint(
@@ -185,7 +173,6 @@ class SecureKvStore {
     if (!primary.available) {
       throw StateError('primary write tier "${primary.name}" is unavailable');
     }
-    _bump(key);
     await primary.write(key, value);
     onPrimaryWrite?.call();
     for (final tier in chain.skip(1)) {
@@ -224,7 +211,6 @@ class SecureKvStore {
   /// short-circuiting on failure. If any tier could not confirm deletion,
   /// throws [KvDeleteIncomplete] naming the tiers; retrying is safe.
   Future<void> delete(String key) async {
-    _bump(key);
     final failed = <String>[];
     final causes = <String, Object>{};
     for (final tier in policy.tiers) {
@@ -302,38 +288,13 @@ extension SecureKvStoreTyped on SecureKvStore {
   }
 
   /// [SecureKvStore.write] through [TypedKey.encode].
+  ///
+  /// There is deliberately no read-modify-write helper for list/set-shaped
+  /// values: an earlier optimistic-version-counter version had a reproduced
+  /// residual race (a reader starting after another writer's version bump
+  /// but before that write landed passed its own check and lost the write —
+  /// see identity#2). The correct fix for list-shaped values is per-record
+  /// keys, not better concurrency control over one blob.
   Future<void> writeTyped<T>(TypedKey<T> k, T value) =>
       write(k.key, k.encode(value));
-
-  /// Optimistic read-modify-write for list/set-shaped values whose
-  /// `load → merge → save` cycle would otherwise let concurrent callers
-  /// silently revert each other across the async gap at the read.
-  ///
-  /// Deliberately an optimistic version counter, NOT a lock or a
-  /// `Future`-chained queue: each call is independent, so a caller whose
-  /// write never settles (an incomplete mock, a `Future` outliving its
-  /// `fakeAsync` zone) can never wedge other callers. The counter is
-  /// captured before the read and re-checked with no `await` between the
-  /// check and the write's synchronous version bump; a mismatch retries
-  /// [merge] against a fresh read. The loop is unbounded on purpose — every
-  /// retry requires a foreign write to have landed in the gap, so retries
-  /// imply system-wide progress, and a cap would convert contention into a
-  /// silent lost update or a throw.
-  ///
-  /// [merge] receives the current [StorageRead] (so an [Unavailable] read
-  /// can carry values forward or throw — its choice, made explicit) and
-  /// returns the value to write. It must be synchronous and side-effect
-  /// free; it may run more than once.
-  Future<void> readModifyWrite<T>(
-      TypedKey<T> k, T Function(StorageRead<T>) merge) async {
-    while (true) {
-      final version = _versionOf(k.key);
-      final current = await readTyped(k);
-      final next = merge(current);
-      if (_versionOf(k.key) != version) continue; // raced — retry fresh.
-      // No await between the check above and write() below: write() bumps
-      // the version synchronously before its first await, closing the gap.
-      return write(k.key, k.encode(next));
-    }
-  }
 }

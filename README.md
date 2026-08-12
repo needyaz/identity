@@ -75,8 +75,7 @@ what this code promises.
   consumers can add e.g. a legacy `SharedPreferences` tier without this
   package taking the dependency), a `TierPolicy` describing read order,
   promote-on-read, migration-only tiers, platform arming, cloud sync-lag
-  retry and write fan-out, plus `TypedKey` views and an optimistic
-  `readModifyWrite`.
+  retry and write fan-out, plus `TypedKey` views.
 - **`identity_store.dart`** — tiered durable storage of the 32-byte seed:
   local Keychain/EncryptedSharedPreferences + iCloud Keychain (iOS) + Block
   Store (Android), built on `SecureKvStore`. Includes the hard-won
@@ -217,7 +216,7 @@ flutter pub get
 flutter test
 ```
 
-Expect `All tests passed!` — 108 tests across `crypto_test.dart` (round-trips,
+Expect `All tests passed!` — 107 tests across `crypto_test.dart` (round-trips,
 failure modes, and the backup/signing known-answer vectors),
 `identity_test.dart` (identity determinism + the store-binding parity vector),
 `crypto_vectors_test.dart` (the golden-vector suite), and

@@ -3,10 +3,9 @@
 /// The invariants under test are the load-bearing ones: `Absent` only when
 /// every available tier read cleanly, `Unavailable` never collapses into
 /// `Absent` (including decode failures), promote/migrate/mirror behavior,
-/// per-tier delete failure surfacing, and lost-update-free readModifyWrite.
+/// and per-tier delete failure surfacing.
 library;
 
-import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter_test/flutter_test.dart';
@@ -472,61 +471,6 @@ void main() {
       final broken = FakeKvTier('a')..readFaults['list'] = Exception('boom');
       expect(await storeWith([broken]).readTyped(listKey),
           isA<Unavailable<List<String>>>());
-    });
-  });
-
-  group('readModifyWrite', () {
-    final listKey = TypedKey<List<String>>(
-      'list',
-      encode: jsonEncode,
-      decode: (s) => (jsonDecode(s) as List<dynamic>).cast<String>(),
-    );
-
-    test('merges onto the stored value', () async {
-      final a = FakeKvTier('a')..store['list'] = jsonEncode(['x']);
-      final store = storeWith([a]);
-      await store.readModifyWrite(
-          listKey, (r) => [...r.valueOr([]), 'y']);
-      expect(jsonDecode(a.store['list']!), ['x', 'y']);
-    });
-
-    test('a concurrent write landing in the read gap is not lost — the merge '
-        'retries against the fresh value', () async {
-      final a = FakeKvTier('a');
-      final store = storeWith([a]);
-      var merges = 0;
-
-      // Start the RMW (suspends at its read), then let a concurrent write
-      // land before the RMW's version re-check. The synchronous version bump
-      // in write() forces the RMW to retry against the fresh value.
-      final rmw = store.readModifyWrite(listKey, (r) {
-        merges++;
-        return [...r.valueOr([]), 'mine'];
-      });
-      await store.writeTyped(listKey, ['theirs']);
-      await rmw;
-
-      expect(jsonDecode(a.store['list']!), ['theirs', 'mine'],
-          reason: 'neither contribution may be lost');
-      expect(merges, greaterThan(1), reason: 'the stale merge must retry');
-    });
-
-    test('a caller whose read never settles cannot wedge other callers — '
-        'no lock, no shared queue', () async {
-      final a = FakeKvTier('a');
-      final store = storeWith([a]);
-
-      final never = Completer<void>();
-      a.readGate = never.future;
-      // Intentionally never awaited: this call is permanently stuck.
-      unawaited(store.readModifyWrite(listKey, (r) => [...r.valueOr([]), 'stuck']));
-      await pumpEventQueue();
-
-      a.readGate = null;
-      await store
-          .readModifyWrite(listKey, (r) => [...r.valueOr([]), 'independent'])
-          .timeout(const Duration(seconds: 5));
-      expect(jsonDecode(a.store['list']!), ['independent']);
     });
   });
 

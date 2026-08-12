@@ -61,9 +61,11 @@ must use exactly the values it already shipped.
   decode failure in `readTyped` must map to `Unavailable`, never `Absent`.
   `IdentityStore` sits on this layer; its public API, tier names
   (`local`/`cloud`/`blockStore`), and `identity_store_test.dart` must not
-  change when the layer evolves. `readModifyWrite` is an optimistic version
-  counter on purpose — never "simplify" it into a lock or a `Future`-chained
-  queue (a stuck caller must never wedge other callers).
+  change when the layer evolves. There is deliberately **no** read-modify-write
+  helper: the optimistic-version-counter one was removed (issue #2) after a
+  reproduced residual race, and any concurrency-control replacement (a lock,
+  a `Future`-chained queue) is worse — the correct fix for list-shaped values
+  is per-record keys. Don't add one back.
 - `package:identity/testing.dart` exports `FakeKvTier` for consumer suites —
   it is public API; keep it dependency-light (no `flutter_test`).
 

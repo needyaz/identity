@@ -14,9 +14,9 @@ It was **extracted from a shipped production app**. The crypto is byte-identical
 to that source — only the app-specific namespace strings were lifted into
 `IdentityConfig`.
 
-It is a standalone package consumed as a path dependency (same pattern as
-`sammy`). It has **zero domain coupling** — no location, no groups, no app
-models. `groups` depends on this; apps depend on this (directly and via `groups`).
+It is a standalone package consumed as a path dependency. It has **zero domain
+coupling** — no app models, no domain types. `groups` depends on this; apps
+depend on this (directly and via `groups`).
 
 ## The cardinal rule: byte-parity
 
@@ -62,7 +62,7 @@ must use exactly the values it already shipped.
   `IdentityStore` sits on this layer; its public API, tier names
   (`local`/`cloud`/`blockStore`), and `identity_store_test.dart` must not
   change when the layer evolves. There is deliberately **no** read-modify-write
-  helper: the optimistic-version-counter one was removed (issue #2) after a
+  helper: the optimistic-version-counter one was removed (CHANGELOG 0.6.0) after a
   reproduced residual race, and any concurrency-control replacement (a lock,
   a `Future`-chained queue) is worse — the correct fix for list-shaped values
   is per-record keys. Don't add one back.

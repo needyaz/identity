@@ -4,8 +4,9 @@ Shared identity, key derivation, secure-storage tiering, and crypto primitives
 for Luci apps. Extracted from a shipped production app; the crypto is
 byte-identical to that source.
 
-This is an L0 foundation package: it has **zero domain coupling** (no location,
-no groups, no app models) and is the substrate the rest of a Luci app builds on.
+This is an L0 foundation package: it has **zero domain coupling** (no app
+models, no domain types — nothing about what the apps built on it actually do)
+and is the substrate the rest of a Luci app builds on.
 
 ## Why this exists
 
@@ -17,7 +18,7 @@ construction — X25519 `crypto_box`, XSalsa20-Poly1305 `secretbox`, sealed
 boxes, Ed25519 detached signatures, keyed BLAKE2b for key derivation — plus
 standard BIP39 for the recovery phrase. The crypto surface is thin glue with
 one fixed, boring wire format: `base64(nonce ‖ ciphertext)`. Read
-`lib/src/crypto.dart`; it's ~250 lines and mostly doc comments.
+`lib/src/crypto.dart`; it's under 300 lines and mostly doc comments.
 
 **The glue is the thing that doesn't exist off the shelf.** What this package
 actually adds is architecture, not cryptography, and each piece earns its
@@ -46,6 +47,35 @@ place:
   The Android mirror hand-rolls a thin JNI bridge specifically because JNA's
   `libjnidispatch.so` crashes on Android 15's 16 KB page-size devices — a
   documented workaround, not not-invented-here.
+
+### The server stays dumb on purpose
+
+The design claim underneath all of this: **identity is a pure function** —
+`(seed, domain) → keypair, uid, backup key, signing key, recovery phrase` —
+computed entirely on the device. Because it is a pure function, the server
+side needs no account state, no key registry, no escrow: it stores opaque
+ciphertext, hands it back, and checks signatures. Of the three derivations,
+only public-side outputs ever surface beyond the device — the uid
+(`SHA-256(pubkey)`), the store-binding token (a hash of two public inputs),
+and Ed25519 *verification* against the derived signing key's public half.
+The backup key derived under `backupKeyDomain` never leaves the device; what
+a server holds is a blob it cannot open.
+
+The consequences are the point:
+
+- **No accounts to breach.** There is no server-side secret whose loss
+  compromises a user's keys.
+- **Verification is public-key math.** Any party can reproduce it from
+  `SPEC.md` without being trusted with anything.
+- **Recovery needs no server cooperation.** The 24 words re-derive
+  everything; there is nothing to reset and no one to ask.
+
+It is also exactly why domain strings are frozen once shipped (see the
+`IdentityConfig` warning below): the domains are the fixed public inputs to
+that pure function. Change one and every output changes — and no migration
+path can exist, because no party anywhere ever held a mapping between old
+and new keys. The immutability rule is not discipline; it is the flip side
+of having no trusted server.
 
 **You don't have to take our word for it.** Three independent implementations
 (Dart, Swift, Kotlin/JNI) are pinned against one shared golden-vector file,
@@ -127,12 +157,15 @@ const acmeIdentity = IdentityConfig(
 );
 ```
 
-> ⚠️ Once an app ships, never change `backupKeyDomain`, `signingKeyDomain`, or
-> `storeBindingDomain`: they feed domain-separated derivations that any server
-> verifier must reproduce byte-for-byte, and changing one rotates every user's
-> derived keys out from under their stored data. An app migrating onto this
-> package must define an `IdentityConfig` with exactly the values it already
-> shipped.
+> ⚠️ **Domain strings are frozen once shipped.** Identity is a pure function
+> of `(seed, domain)` with no server-side registry — changing a shipped
+> domain silently re-derives every user's keys out from under their stored
+> data, and no migration path can exist because no party ever held a mapping
+> between old and new. Only the public-side derivations (uid, store-binding
+> token, signature *verification*) are ever reproduced by a server verifier —
+> which must therefore use byte-identical domains; the backup key never
+> leaves the device. An app migrating onto this package must define an
+> `IdentityConfig` with exactly the values it already shipped.
 
 ## Usage
 

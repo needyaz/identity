@@ -1,7 +1,7 @@
 ## 0.6.0
 
 - **Breaking: removed `SecureKvStore.readModifyWrite` and the per-key version
-  counters backing it** (issue #2). Its last consumer moved to per-record
+  counters backing it.** Its last consumer moved to per-record
   storage, and the optimistic version counter had a reproduced residual race:
   a reader starting after another writer's synchronous version bump but
   before that write *landed* passed its own version check and could lose the
@@ -13,7 +13,7 @@
 
 ## 0.5.0
 
-- **New: generic tiered secure storage — `SecureKvStore`** (issue #1). The
+- **New: generic tiered secure storage — `SecureKvStore`.** The
   tiering machinery that lived inside `IdentityStore` is now a reusable,
   exported layer: `StorageRead<T>` (sealed tri-state `Present` / `Absent` /
   `Unavailable` — an exhaustive `switch` makes "failed read treated as

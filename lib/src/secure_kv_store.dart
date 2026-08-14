@@ -293,8 +293,8 @@ extension SecureKvStoreTyped on SecureKvStore {
   /// values: an earlier optimistic-version-counter version had a reproduced
   /// residual race (a reader starting after another writer's version bump
   /// but before that write landed passed its own check and lost the write —
-  /// see identity#2). The correct fix for list-shaped values is per-record
-  /// keys, not better concurrency control over one blob.
+  /// see CHANGELOG 0.6.0). The correct fix for list-shaped values is
+  /// per-record keys, not better concurrency control over one blob.
   Future<void> writeTyped<T>(TypedKey<T> k, T value) =>
       write(k.key, k.encode(value));
 }

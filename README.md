@@ -60,6 +60,30 @@ presence-unknown tri-state, the overwrite guard, and the parity vectors are
 the direct response; treat `SPEC.md` as the auditable statement of exactly
 what this code promises.
 
+## Why this is public
+
+Not because anyone needs it as a dependency. The apps built on this package
+make claims — end-to-end encrypted, recoverable from a 24-word phrase, "we
+cannot read your data" — that users normally have to take on faith. This
+package is the layer where those claims are actually implemented, so it is
+published: "audit it yourself" should be a literal offer, not a figure of
+speech. The `SPEC.md` contract, the independently-computed known-answer
+vectors, and the three-implementation parity suite below exist to make that
+audit cheap for anyone with a checkout.
+
+You *can* use it — it's MIT, and the `IdentityConfig` seam means nothing in
+here is tied to our apps — but adoption is a side effect, not the goal. Read
+it first as a demonstration of how we handle the security-critical parts of
+what we ship: the contract written down before it's defended, failure
+semantics treated as API (a failed read is never "no data"), and known gaps
+stated here rather than left for a reader to find.
+
+The honest limit of the offer: a public repo shows the code we maintain and
+test, not the bytes inside a given app-store binary — tying those together
+would take reproducible builds, which this repo does not claim. What it does
+give you is a precise, runnable statement of what the apps are *supposed* to
+be doing, and a way to hold us to it.
+
 ## What's in here
 
 - **`crypto.dart`** — generic libsodium primitives: DH shared secret, symmetric

@@ -73,9 +73,11 @@ implementation (Python `hashlib` for the SHA-256 and keyed-BLAKE2b stages,
 `cryptography`'s Ed25519 for seed → public key), so they pin the derivations
 against a second implementation rather than against this code itself. They are
 asserted in `test/identity_test.dart` and `test/crypto_test.dart`. If any
-drifts, parity is broken. Consuming apps and their server verifiers should
-additionally pin vectors under their own production domains in their own
-repos.
+drifts, parity is broken. The independent computation is committed as
+`tools/verify_vectors.py` — run it to re-derive every value above from
+`hashlib`/`cryptography` and compare. Consuming apps and their server
+verifiers should additionally pin vectors under their own production domains
+in their own repos.
 
 ## Native crypto mirrors (`native/ios/`, `native/android/`)
 

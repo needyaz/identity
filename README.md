@@ -1,5 +1,7 @@
 # identity
 
+[![CI](https://github.com/needyaz/identity/actions/workflows/ci.yml/badge.svg)](https://github.com/needyaz/identity/actions/workflows/ci.yml)
+
 Shared identity, key derivation, secure-storage tiering, and crypto primitives
 for Luci apps. Extracted from a shipped production app; the crypto is
 byte-identical to that source.
@@ -262,7 +264,26 @@ the same `test/crypto_vectors.json` golden vectors.
 Three independent implementations of the same crypto (Dart, Swift, Kotlin/JNI),
 three independent test suites, all three pinned against the same
 `test/crypto_vectors.json` golden vectors. Anyone with a clean checkout can
-reproduce all of this — no backend, no account needed.
+reproduce all of this — no backend, no account needed. CI runs the Dart,
+Swift, and Android-emulator suites on every push (badge above).
+
+### The derivation vectors, without trusting this repo
+
+The known-answer vectors in `SPEC.md` were computed with an implementation
+that shares no code with this package — Python's stdlib `hashlib` plus the
+`cryptography` package's Ed25519. That computation is committed, not just
+claimed: run
+
+```
+python3 tools/verify_vectors.py
+```
+
+and it re-derives all five expected values from the spec'd algorithms and
+compares them (exit non-zero on any mismatch). The script's docstring states
+its scope honestly: it covers the domain-separated derivations; the
+box/sealed-box/secretbox golden vectors are libsodium constructions with no
+mainstream independent Python implementation, and their guarantee is the
+three-way binding parity below instead.
 
 ### Dart
 

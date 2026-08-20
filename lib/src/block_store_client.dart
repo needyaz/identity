@@ -53,12 +53,26 @@ class BlockStoreClient {
   Future<String?> get(String key) async {
     if (!_isAndroid) return null;
     try {
-      return await _channel
-          .invokeMethod<String>('get', {'key': key}).timeout(_kTimeout);
+      return await getStrict(key);
     } catch (e) {
       debugPrint('[BlockStore] get($key) failed: $e');
       return null;
     }
+  }
+
+  /// Like [get], but a FAILED read (platform error, timeout, hung task)
+  /// THROWS instead of reading as "absent". The tiered store's tri-state
+  /// depends on that difference: a confirmed absence may be trusted — and a
+  /// freshly minted seed's write fan-out may then overwrite this tier — while
+  /// "couldn't read" must never be. Collapsing a Play Services outage to null
+  /// made a restored seed's ONLY cloud copy on Android clobberable during a
+  /// re-onboard. A native bridge that still maps failures to a null success
+  /// (the legacy contract) simply never throws here — behavior is unchanged
+  /// until the bridge is upgraded to surface errors as errors.
+  Future<String?> getStrict(String key) async {
+    if (!_isAndroid) return null;
+    return _channel
+        .invokeMethod<String>('get', {'key': key}).timeout(_kTimeout);
   }
 
   /// Writes the UTF-8 string [value] under [key]. Returns true on success.

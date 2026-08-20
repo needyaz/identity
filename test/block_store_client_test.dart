@@ -73,6 +73,41 @@ void main() {
     });
   });
 
+  group('the tier reads strictly — failure is UNAVAILABLE, never absent', () {
+    BlockStoreTier tier() => BlockStoreTier(
+          BlockStoreClient('test/blockstore',
+              isAndroid: true, timeout: const Duration(milliseconds: 50)),
+          available: true,
+        );
+
+    test('a platform error propagates out of read/containsKey', () async {
+      // Collapsing this to null read as "confirmed absent" — which lets a
+      // fresh mint's write fan-out overwrite the REAL seed this tier holds
+      // (the exact clobber class the tri-state exists to prevent).
+      mockHandler((call) async => throw PlatformException(code: 'UNAVAILABLE'));
+      await expectLater(tier().read('k'), throwsA(isA<PlatformException>()));
+      await expectLater(
+          tier().containsKey('k'), throwsA(isA<PlatformException>()));
+    });
+
+    test('a hung task times out to a THROW', () async {
+      mockHandler((call) => Completer<Object?>().future);
+      await expectLater(tier().read('k'), throwsA(isA<TimeoutException>()));
+    });
+
+    test('a clean null success is still a clean miss', () async {
+      mockHandler((call) async => null);
+      expect(await tier().read('k'), isNull);
+      expect(await tier().containsKey('k'), isFalse);
+    });
+
+    test('the lenient get() keeps its legacy swallow (Mylo compat)', () async {
+      mockHandler((call) async => throw PlatformException(code: 'UNAVAILABLE'));
+      final client = BlockStoreClient('test/blockstore', isAndroid: true);
+      expect(await client.get('k'), isNull);
+    });
+  });
+
   group('delete retry-on-timeout', () {
     test('retries once when the platform call hangs, then returns false',
         () async {

@@ -89,11 +89,15 @@ class SecureStorageTier implements KvTier {
 /// cross-device durable copy). [available] defaults to the real platform
 /// check; tests and [IdentityStore] inject their own flag.
 ///
-/// [BlockStoreClient] reports failure by returning null/false rather than
-/// throwing (it is opportunistic by contract), so a false `put`/`delete`
-/// return is converted to a throw here — the generic layer must be able to
-/// count a failed delete, or a silently surviving copy resurrects deleted
-/// data via promote-on-read.
+/// [BlockStoreClient.get] reports failure by returning null rather than
+/// throwing (it is opportunistic by contract) — but this tier must NOT: the
+/// tri-state [StorageRead] treats a throw as "unavailable" and a null as
+/// "confirmed absent", and only the former stops a fresh mint from
+/// overwriting a real seed this tier holds. Reads therefore use
+/// [BlockStoreClient.getStrict]; a false `put`/`delete` return is likewise
+/// converted to a throw — the generic layer must be able to count a failed
+/// delete, or a silently surviving copy resurrects deleted data via
+/// promote-on-read.
 class BlockStoreTier implements KvTier {
   BlockStoreTier(
     this.client, {
@@ -116,10 +120,11 @@ class BlockStoreTier implements KvTier {
   bool get enumerable => false;
 
   @override
-  Future<String?> read(String key) => client.get(key);
+  Future<String?> read(String key) => client.getStrict(key);
 
   @override
-  Future<bool> containsKey(String key) async => await client.get(key) != null;
+  Future<bool> containsKey(String key) async =>
+      await client.getStrict(key) != null;
 
   @override
   Future<void> write(String key, String value) async {

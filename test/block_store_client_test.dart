@@ -101,7 +101,25 @@ void main() {
       expect(await tier().containsKey('k'), isFalse);
     });
 
-    test('the lenient get() keeps its legacy swallow (Mylo compat)', () async {
+    test('NO native handler is a confirmed non-participant, not a failure',
+        () async {
+      // The documented "app never wired the bridge" configuration:
+      // MissingPluginException is raised CLIENT-side, so without this the
+      // tier turns every read into a failure — absence can never be
+      // confirmed, the launch gate never sees "no identity", and a fresh
+      // install can never persist a seed without force. Unprovisioned holds
+      // nothing, definitionally.
+      final tier = BlockStoreTier(
+        BlockStoreClient('absent/channel',
+            isAndroid: true, timeout: const Duration(milliseconds: 50)),
+        available: true,
+      );
+      expect(await tier.read('k'), isNull);
+      expect(await tier.containsKey('k'), isFalse);
+    });
+
+    test('the lenient get() keeps its legacy swallow (legacy-bridge compat)',
+        () async {
       mockHandler((call) async => throw PlatformException(code: 'UNAVAILABLE'));
       final client = BlockStoreClient('test/blockstore', isAndroid: true);
       expect(await client.get('k'), isNull);

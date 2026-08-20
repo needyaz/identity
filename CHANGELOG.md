@@ -1,3 +1,27 @@
+## 0.7.0
+
+- **Block Store reads join the tri-state: a failed read is UNAVAILABLE, never
+  absent.** `BlockStoreClient.get` collapsed every failure (platform error,
+  timeout, hung Play Services task) to null, and `BlockStoreTier` passed that
+  through as a clean miss — so `SecureKvStore`'s tri-state read the one
+  Android cloud tier's *failure* as "confirmed absent", the single answer
+  that authorizes a fresh mint's write fan-out to overwrite a seed the tier
+  actually holds. New `BlockStoreClient.getStrict` (throws on failure; null
+  only on a confirmed miss) is what the tier reads through; the lenient
+  `get()` keeps its exact legacy swallow for direct callers.
+- **Behavior change:** a hung/timed-out Block Store task now surfaces as
+  presence-unknown (`IdentitySeedPresenceUnknown` at the store level) rather
+  than absent — deliberate: "couldn't read" was the clobber vector. On AVDs
+  without Play Services, where tasks are known to hang, expect
+  presence-unknown instead of a silent miss.
+- **Not a behavior change:** no registered native handler
+  (`MissingPluginException`) stays a confirmed non-participant (null), so an
+  app that never wired the bridge boots exactly as before. A legacy bridge
+  that maps failures to null successes also behaves exactly as before —
+  surfacing failures requires the host bridge to report them as channel
+  errors (`result.error(...)`), with "Block Store not supported here" kept a
+  null success.
+
 ## 0.6.0
 
 - **Breaking: removed `SecureKvStore.readModifyWrite` and the per-key version

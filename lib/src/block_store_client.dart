@@ -66,13 +66,37 @@ class BlockStoreClient {
   /// freshly minted seed's write fan-out may then overwrite this tier — while
   /// "couldn't read" must never be. Collapsing a Play Services outage to null
   /// made a restored seed's ONLY cloud copy on Android clobberable during a
-  /// re-onboard. A native bridge that still maps failures to a null success
-  /// (the legacy contract) simply never throws here — behavior is unchanged
-  /// until the bridge is upgraded to surface errors as errors.
+  /// re-onboard.
+  ///
+  /// Two client-side cases are NOT failures:
+  ///  - non-Android → null (the tier is off, same as [get]);
+  ///  - no native handler registered ([MissingPluginException]) → null: an
+  ///    unprovisioned tier definitionally holds nothing — the same category
+  ///    as `available == false`, a confirmed non-participant. Treating it as
+  ///    a failure would brick a fresh install of an app that never wired the
+  ///    bridge (absence could never be confirmed, so no seed could be
+  ///    persisted without force).
+  ///
+  /// A [TimeoutException] DOES propagate — a hung Play Services task is
+  /// genuinely "couldn't read", and treating it as absence is the clobber
+  /// vector above. (On AVDs without Play Services, where tasks are known to
+  /// hang, reads now surface as presence-unknown rather than absent.)
+  ///
+  /// Bridge contract for host apps: answer "Block Store not supported here"
+  /// (no lock screen, outdated Play Services) as a null SUCCESS, and reserve
+  /// `result.error(...)` for genuine read failures. With reads strict, that
+  /// distinction is what keeps an opportunistic tier from becoming
+  /// load-bearing for the launch gate. A legacy bridge that still maps
+  /// failures to a null success simply never throws here — behavior is
+  /// unchanged until it opts in.
   Future<String?> getStrict(String key) async {
     if (!_isAndroid) return null;
-    return _channel
-        .invokeMethod<String>('get', {'key': key}).timeout(_kTimeout);
+    try {
+      return await _channel
+          .invokeMethod<String>('get', {'key': key}).timeout(_kTimeout);
+    } on MissingPluginException {
+      return null; // unprovisioned tier — a confirmed non-participant
+    }
   }
 
   /// Writes the UTF-8 string [value] under [key]. Returns true on success.

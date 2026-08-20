@@ -98,7 +98,10 @@ class FakeSecureStorage implements FlutterSecureStorage {
 
 /// In-memory BlockStoreClient double (never touches a MethodChannel).
 class FakeBlockStore extends BlockStoreClient {
-  FakeBlockStore() : super('test/blockstore', isAndroid: false);
+  // isAndroid: true so the inherited lenient get() (which now delegates to
+  // the overridden getStrict) doesn't early-return null; the real channel is
+  // still never touched — every primitive is overridden.
+  FakeBlockStore() : super('test/blockstore', isAndroid: true);
 
   final Map<String, String> store = {};
   Object? throwOnGet;
@@ -109,8 +112,11 @@ class FakeBlockStore extends BlockStoreClient {
   /// by returning false, not throwing.
   bool deleteResult = true;
 
+  // The STRICT primitive is the seam now (the real tier reads through it):
+  // a scripted throw models a Play Services failure the tri-state must SEE.
+  // The lenient get() inherits the real swallow-to-null wrapper.
   @override
-  Future<String?> get(String key) async {
+  Future<String?> getStrict(String key) async {
     getCount++;
     if (throwOnGet != null) throw throwOnGet!;
     final queue = getQueue;

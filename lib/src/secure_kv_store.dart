@@ -68,6 +68,7 @@ class SecureKvStore {
   ///   carries the first failure.
   Future<StorageRead<String>> read(String key) async {
     Object? firstFailure;
+    final failedTiers = <String>{};
     for (final tier in policy.tiers) {
       if (!tier.available) continue;
       final retry = policy.retryDelay != null &&
@@ -79,11 +80,13 @@ class SecureKvStore {
           value = await tier.read(key);
         } catch (e) {
           firstFailure ??= e;
+          failedTiers.add(tier.name);
           debugPrint('[SecureKvStore] read($key): ${tier.name} failed '
               '(attempt ${attempt + 1}): $e');
         }
         if (value != null) {
-          await _promote(key, value, source: tier);
+          await _promote(key, value,
+              source: tier, failedThisRead: failedTiers);
           return Present(value, tier: tier.name);
         }
         if (attempt == 0 && attempts == 2) {
@@ -98,13 +101,24 @@ class SecureKvStore {
   }
 
   Future<void> _promote(String key, String value,
-      {required KvTier source}) async {
+      {required KvTier source, Set<String> failedThisRead = const {}}) async {
     if (!policy.promoteOnRead) return;
     if (policy.noPromoteTiers.contains(source.name)) return;
     final chain = _writeChain;
     if (chain.isEmpty) return;
     final primary = chain.first;
     if (source.name == primary.name || !primary.available) return;
+    // Never overwrite a primary whose read FAILED this pass. A miss is
+    // promotable ground; a failure is unknown ground — the primary may hold
+    // a DIFFERENT value the failure hid (two devices on one cloud account,
+    // one force-restored), and writing over it silently replaces this
+    // device's identity. Same never-overwrite-on-doubt discipline as
+    // save()'s guard; promotion simply retries on a later, healthy read.
+    if (failedThisRead.contains(primary.name)) {
+      debugPrint('[SecureKvStore] read($key): promote skipped — '
+          '${primary.name} read failed this pass (miss ≠ failure)');
+      return;
+    }
     try {
       await primary.write(key, value);
       debugPrint(
@@ -175,15 +189,22 @@ class SecureKvStore {
     }
     await primary.write(key, value);
     onPrimaryWrite?.call();
-    for (final tier in chain.skip(1)) {
-      if (!tier.available) continue;
-      try {
-        await tier.write(key, value);
-      } catch (e) {
-        debugPrint('[SecureKvStore] write($key): best-effort mirror to '
-            '${tier.name} failed: $e');
-      }
-    }
+    // Mirrors are independent and individually best-effort — run them
+    // CONCURRENTLY: serial awaits put one hung tier's full timeout (a
+    // stalled Play Services task can ride out several seconds) on the save
+    // path ahead of every other mirror.
+    await Future.wait([
+      for (final tier in chain.skip(1))
+        if (tier.available)
+          () async {
+            try {
+              await tier.write(key, value);
+            } catch (e) {
+              debugPrint('[SecureKvStore] write($key): best-effort mirror to '
+                  '${tier.name} failed: $e');
+            }
+          }(),
+    ]);
   }
 
   /// Ensures every available non-primary write tier holds [key]=[value],

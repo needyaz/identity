@@ -6,6 +6,7 @@
 /// and per-tier delete failure surfacing.
 library;
 
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter_test/flutter_test.dart';
@@ -29,6 +30,54 @@ void main() {
         retryDelay: retryDelay,
         retryTiers: retryTiers,
       ));
+
+  group('promote-on-read discipline', () {
+    test('never overwrites a primary whose read FAILED this pass', () async {
+      // The primary HOLDS a value the failure is hiding (two devices on one
+      // cloud account, one force-restored): promoting the cloud's value over
+      // it would silently replace this device's identity. A miss is
+      // promotable ground; a failure is unknown ground.
+      final primary = FakeKvTier('local')
+        ..store['k'] = 'mine'
+        ..readFaults['k'] = Exception('keychain locked');
+      final cloud = FakeKvTier('cloud')..store['k'] = 'theirs';
+      final result = await storeWith([primary, cloud]).read('k');
+      expect(result, isA<Present<String>>());
+      expect((result as Present<String>).value, 'theirs');
+      expect(primary.store['k'], 'mine',
+          reason: 'a failed primary read must never be promoted over');
+    });
+
+    test('a clean primary MISS still promotes (unchanged)', () async {
+      final primary = FakeKvTier('local');
+      final cloud = FakeKvTier('cloud')..store['k'] = 'v';
+      await storeWith([primary, cloud]).read('k');
+      expect(primary.store['k'], 'v');
+    });
+  });
+
+  group('mirror concurrency', () {
+    test('a held-open mirror does not gate its sibling', () async {
+      // Serial awaits meant one hung tier's full timeout (a stalled Play
+      // Services task) sat on the save path ahead of every other mirror.
+      // Concurrent: the fast mirror lands WHILE the slow one is held open —
+      // impossible under serial awaits, since slow precedes fast in the
+      // chain. (A serial regression deadlocks this test → suite timeout.)
+      final gate = Completer<void>();
+      final primary = FakeKvTier('local');
+      final slow = FakeKvTier('m1')..writeGate = gate.future;
+      final fast = FakeKvTier('m2');
+      final done = storeWith([primary, slow, fast]).write('k', 'v');
+      while (fast.store['k'] != 'v') {
+        await Future<void>.delayed(const Duration(milliseconds: 1));
+      }
+      expect(gate.isCompleted, isFalse,
+          reason: 'the fast mirror landed while the slow one was held open');
+      gate.complete();
+      await done;
+      expect(slow.store['k'], 'v');
+    });
+  });
 
   group('read tri-state', () {
     test('Absent only when every available tier read cleanly and none held '

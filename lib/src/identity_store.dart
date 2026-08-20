@@ -143,19 +143,34 @@ class IdentityStore {
   late final SecureKvStore _kv = SecureKvStore(TierPolicy(
     tiers: [
       SecureStorageTier(_localTier, _local),
-      SecureStorageTier(_cloudTier, _cloud),
+      // iOS-only: on Android the synchronizable flag is a no-op and this
+      // resolves to the SAME EncryptedSharedPreferences as local — arming it
+      // made a true-new Android install pay a full retry budget re-reading a
+      // store local had already confirmed empty (the real Android cloud is
+      // Block Store).
+      SecureStorageTier(_cloudTier, _cloud, available: !_isAndroid),
       BlockStoreTier(_blockStore, available: _isAndroid),
     ],
     retryDelay: _syncRetryDelay,
     retryTiers: const {_cloudTier, _blockStoreTier},
   ));
 
-  /// Returns true if the identity seed is present in the cloud backup tier:
-  /// Block Store on Android, iCloud Keychain on iOS.
+  /// Returns true when the cloud backup tier holds THIS device's current
+  /// seed: Block Store on Android, iCloud Keychain on iOS. Value-compared
+  /// against the local tier — presence alone mis-reported "backed up" after
+  /// another device's force-restore replaced the SHARED cloud copy with a
+  /// different identity's seed.
   Future<bool> isCloudBackedUp() async {
-    if (_isAndroid) return await _blockStore.get(_seedKey) != null;
+    String? mine;
     try {
-      return await _cloud.containsKey(key: _seedKey);
+      mine = await _local.read(key: _seedKey);
+    } catch (_) {
+      return false; // can't read our own seed → no honest claim to make
+    }
+    if (mine == null) return false;
+    if (_isAndroid) return await _blockStore.get(_seedKey) == mine;
+    try {
+      return await _cloud.read(key: _seedKey) == mine;
     } catch (_) {
       return false;
     }

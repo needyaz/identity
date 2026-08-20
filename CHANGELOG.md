@@ -1,3 +1,26 @@
+## 0.8.0
+
+- **Promote-on-read honors never-overwrite-on-doubt.** A cloud-tier hit was
+  promoted over the primary even when the primary's read had FAILED that same
+  pass — unknown ground, not a miss: the primary may hold a different value
+  the failure hid (two devices on one cloud account, one force-restored), and
+  the promote silently replaced this device's identity. Promotion now skips a
+  primary that failed this read and retries on a later, healthy one.
+- **`isCloudBackedUp` value-compares instead of presence-checking.** After
+  another device force-restored a different identity, the shared cloud item
+  held *someone's* seed and the readout still said "backed up". It now
+  reports true only when the cloud copy equals this device's local seed.
+- **Android no longer arms the duplicate 'cloud' secure-storage tier.** The
+  `synchronizable` flag is a no-op there, so that tier resolves to the same
+  EncryptedSharedPreferences as local: arming it made a true-new install pay
+  a full retry budget re-reading a store local had already confirmed empty,
+  and save/clear double-wrote/deleted the same physical store. Block Store
+  remains the Android cloud tier.
+- **Mirror writes run concurrently.** Serial awaits put one hung tier's full
+  timeout (a stalled Play Services task) on the save path ahead of every
+  other mirror; the primary-first ordering and per-tier best-effort semantics
+  are unchanged.
+
 ## 0.7.0
 
 - **Block Store reads join the tri-state: a failed read is UNAVAILABLE, never

@@ -254,14 +254,24 @@ void main() {
       expect(local.store['acme.seed'], seedB64);
     });
 
-    test('writes local + cloud + Block Store', () async {
-      // save() delegates Block Store writes unconditionally; the non-Android
-      // no-op is BlockStoreClient's contract (block_store_client_test.dart).
+    test('writes local + cloud (iOS) / local + Block Store (Android)',
+        () async {
       final id = identityFromSeed(sodium, seed);
-      await storeOn(android: true).save(id);
+      await storeOn(android: false).save(id);
       expect(local.store['acme.seed'], seedB64);
       expect(cloud.store['acme.seed'], seedB64);
+
+      // Android: Block Store IS the cloud; the 'cloud' secure-storage tier
+      // resolves to the SAME EncryptedSharedPreferences as local there
+      // (synchronizable is a no-op), so it is deliberately not armed — the
+      // local write already wrote that physical store once.
+      local.store.clear();
+      cloud.store.clear();
+      await storeOn(android: true).save(id);
+      expect(local.store['acme.seed'], seedB64);
       expect(block.store['acme.seed'], seedB64);
+      expect(cloud.store['acme.seed'], isNull,
+          reason: 'the duplicate tier must not be written twice');
     });
 
     test('cloud write failure is best-effort — save still succeeds', () async {
@@ -279,8 +289,14 @@ void main() {
       expect(id, isNotNull);
       expect(id!.seed.extractBytes(), equals(seed));
       await pumpEventQueue(); // let the fire-and-forget backfill run
-      expect(cloud.store['acme.seed'], seedB64);
       expect(block.store['acme.seed'], seedB64);
+
+      // iOS arm: the iCloud tier is the one that backfills there.
+      block.store.clear();
+      final id2 = await storeOn(android: false).load(sodium);
+      expect(id2, isNotNull);
+      await pumpEventQueue();
+      expect(cloud.store['acme.seed'], seedB64);
     });
 
     test('local miss + iCloud hit promotes the seed to local', () async {
@@ -407,36 +423,38 @@ void main() {
   });
 
   group('clear / isCloudBackedUp', () {
-    test('clear wipes every tier', () async {
+    test('clear wipes every armed tier on both platforms', () async {
       local.store['acme.seed'] = seedB64;
-      cloud.store['acme.seed'] = seedB64;
       block.store['acme.seed'] = seedB64;
       await storeOn(android: true).clear();
       expect(local.store, isEmpty);
-      expect(cloud.store, isEmpty);
       expect(block.store, isEmpty);
+
+      local.store['acme.seed'] = seedB64;
+      cloud.store['acme.seed'] = seedB64;
+      await storeOn(android: false).clear();
+      expect(local.store, isEmpty);
+      expect(cloud.store, isEmpty);
     });
 
     test('cloud delete failure still wipes the other tiers and throws '
         'IdentityClearIncomplete — a locked iCloud tier must not silently '
         'keep the seed alive', () async {
+      // iOS-shaped scenario (a locked iCloud Keychain tier).
       local.store['acme.seed'] = seedB64;
       cloud.store['acme.seed'] = seedB64;
-      block.store['acme.seed'] = seedB64;
       cloud.throwOnDelete = Exception('keychain locked');
       await expectLater(
-        storeOn(android: true).clear(),
+        storeOn(android: false).clear(),
         throwsA(isA<IdentityClearIncomplete>()
             .having((e) => e.tiers, 'tiers', ['cloud'])),
       );
       expect(local.store, isEmpty);
-      expect(block.store, isEmpty);
     });
 
     test('local delete failure does not short-circuit the cloud tiers',
         () async {
       local.store['acme.seed'] = seedB64;
-      cloud.store['acme.seed'] = seedB64;
       block.store['acme.seed'] = seedB64;
       local.throwOnDelete = Exception('keystore bad state');
       await expectLater(
@@ -444,7 +462,6 @@ void main() {
         throwsA(isA<IdentityClearIncomplete>()
             .having((e) => e.tiers, 'tiers', ['local'])),
       );
-      expect(cloud.store, isEmpty);
       expect(block.store, isEmpty);
     });
 
@@ -461,33 +478,53 @@ void main() {
     test('collects every failed tier, and a retry after the failures resolve '
         'succeeds (deletes are idempotent)', () async {
       local.store['acme.seed'] = seedB64;
-      cloud.store['acme.seed'] = seedB64;
       block.store['acme.seed'] = seedB64;
       local.throwOnDelete = Exception('a');
-      cloud.throwOnDelete = Exception('b');
       block.deleteResult = false;
       final store = storeOn(android: true);
       await expectLater(
         store.clear(),
         throwsA(isA<IdentityClearIncomplete>()
-            .having((e) => e.tiers, 'tiers', ['local', 'cloud', 'blockStore'])),
+            .having((e) => e.tiers, 'tiers', ['local', 'blockStore'])),
       );
       local.throwOnDelete = null;
-      cloud.throwOnDelete = null;
       block.deleteResult = true;
       await store.clear();
       expect(local.store, isEmpty);
-      expect(cloud.store, isEmpty);
       expect(block.store, isEmpty);
     });
 
     test('isCloudBackedUp consults Block Store on Android, iCloud otherwise',
         () async {
+      local.store['acme.seed'] = seedB64; // the value-compare baseline
       block.store['acme.seed'] = seedB64;
       expect(await storeOn(android: true).isCloudBackedUp(), isTrue);
       expect(await storeOn(android: false).isCloudBackedUp(), isFalse);
       cloud.store['acme.seed'] = seedB64;
       expect(await storeOn(android: false).isCloudBackedUp(), isTrue);
+    });
+
+    test('isCloudBackedUp is honest about WHOSE seed the cloud holds',
+        () async {
+      // Another device's force-restore replaced the SHARED cloud item with a
+      // different identity's seed: presence alone said "backed up" while the
+      // cloud would restore someone else. Value-compare says the truth.
+      local.store['acme.seed'] = seedB64;
+      cloud.store['acme.seed'] = 'bm90LW15LXNlZWQ=';
+      expect(await storeOn(android: false).isCloudBackedUp(), isFalse);
+      block.store['acme.seed'] = 'bm90LW15LXNlZWQ=';
+      expect(await storeOn(android: true).isCloudBackedUp(), isFalse);
+    });
+
+    test('a fresh Android install never reads the duplicate cloud tier',
+        () async {
+      // On Android the 'cloud' secure-storage tier is byte-identical to
+      // local; arming it made a true-new install pay a full retry budget
+      // re-reading a store local had already confirmed empty.
+      final id = await storeOn(android: true).load(sodium);
+      expect(id, isNull);
+      expect(cloud.readCount, 0,
+          reason: 'the duplicate tier must be skipped entirely');
     });
 
     test('isCloudBackedUp reports false (not throw) when iCloud read fails',

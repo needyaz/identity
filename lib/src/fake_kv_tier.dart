@@ -59,6 +59,10 @@ class FakeKvTier implements KvTier {
   /// call that never settles.
   Future<void>? readGate;
 
+  /// When set, `write` first awaits this future — lets a test prove mirror
+  /// writes run concurrently (a held-open mirror must not gate its siblings).
+  Future<void>? writeGate;
+
   final Map<String, int> readCounts = {};
 
   /// How many times [read] was called for [key].
@@ -89,6 +93,8 @@ class FakeKvTier implements KvTier {
 
   @override
   Future<void> write(String key, String value) async {
+    final gate = writeGate;
+    if (gate != null) await gate;
     if (failAllWrites) throw defaultFault;
     final fault = writeFaults[key];
     if (fault != null) throw fault;

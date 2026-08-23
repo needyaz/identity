@@ -112,23 +112,22 @@ crypto-mirror drift bug — the security-relevant kind, not a cosmetic one. The
 native mirrors are scoped **narrowly** to these primitives only — no identity
 derivation, no BIP39, no secure storage, no app business logic.
 
-## Secure storage
+## Secure storage (out of scope since 1.0.0)
 
-The seed is mirrored across tiers, read local-first:
-- **iOS** — local Keychain (`first_unlock`, not synced) + iCloud Keychain
-  (`synchronizable`, best-effort).
-- **Android** — EncryptedSharedPreferences (local) + Block Store (cloud,
-  best-effort, via the `blockStoreChannel` native handler).
+This package no longer persists the seed — identity is a pure function, and
+durable storage lives in a separate storage layer that consuming apps compose
+with `identityFromSeed`. Two invariants any conforming seed store must
+uphold (they were enforced here through 0.9.x, and the production storage
+layer still enforces them):
 
-**Invariant:** `hasIdentity()` returns false only when *every* tier was readable
-and confirmed absent. A failed read throws `IdentitySeedPresenceUnknown` —
-"couldn't read" must never collapse into "no identity" (the root of the recurring
-re-onboard/seed-clobber class). `save()` refuses to overwrite an existing seed
-unless `force: true`.
+1. **A failed read is never "no identity."** Presence may only be reported
+   absent when *every* storage tier was readable and confirmed absent;
+   otherwise it is unknown, and unknown must never route an established user
+   to onboarding.
+2. **A fresh seed never overwrites an existing one** without explicit
+   recovery intent (a forced restore) — including when presence cannot be
+   confirmed: never overwrite on doubt.
 
-The tier orchestration is the generic `SecureKvStore` layer (sealed tri-state
-`StorageRead` results, `KvTier` chain, `TierPolicy`); `IdentityStore` is that
-layer configured with the seed's policy plus the identity-specific guards
-above. The generic layer generalizes the same invariant: `Absent` only when
-every available tier read cleanly, otherwise `Unavailable` — never
-interchangeable.
+`IdentityConfig.seedStorageKey` and `IdentityConfig.blockStoreChannel` remain
+in the config as passive per-app namespace data the app forwards to its
+storage layer; this package never reads them.

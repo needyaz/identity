@@ -1,3 +1,26 @@
+## 1.0.0
+
+- **Pure Dart.** The tiered secure-storage layer (`SecureKvStore`,
+  `StorageRead`, `KvTier`, `TierPolicy`, `BlockStoreClient`, `FakeKvTier`)
+  and `IdentityStore` moved out of this package into the separate private
+  `storage` package, which generalized `IdentityStore` into its
+  `GuardedSlot` (same tiers, same guards, same test suite — the seed
+  specialized to an opaque value). This package now has **no dependency on
+  Flutter, flutter_secure_storage, or the storage repo**: it is crypto +
+  derivation + `IdentityConfig` only, and deliberately must never grow a
+  private dependency (identity is public). Apps compose
+  `GuardedSlot` + `identityFromSeed` for their seed store; the two seed-store
+  invariants (failed read ≠ no identity; never overwrite without recovery
+  intent) are retained normatively in SPEC.md "Secure storage".
+- **Breaking:** `IdentityStore`, `IdentityAlreadyExistsException`,
+  `IdentitySeedPresenceUnknown`, `IdentityClearIncomplete`, the storage-layer
+  exports, and `package:identity/testing.dart` are gone. `IdentityConfig` is
+  unchanged (`seedStorageKey`/`blockStoreChannel` remain as passive per-app
+  namespace data the app forwards to its storage layer). The crypto and
+  derivation surface is byte-identical — no vector changed.
+- Dev tooling: `flutter_test`/`flutter_lints` → `test`/`lints`; CI's Dart
+  job runs on the bare Dart SDK.
+
 ## 0.8.0
 
 - **Promote-on-read honors never-overwrite-on-doubt.** A cloud-tier hit was

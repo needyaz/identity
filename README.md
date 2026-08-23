@@ -2,9 +2,9 @@
 
 [![CI](https://github.com/needyaz/identity/actions/workflows/ci.yml/badge.svg)](https://github.com/needyaz/identity/actions/workflows/ci.yml)
 
-Shared identity, key derivation, secure-storage tiering, and crypto primitives
-for Luci apps. Extracted from a shipped production app; the crypto is
-byte-identical to that source.
+Shared identity, key derivation, and crypto primitives for Luci apps.
+Pure Dart — no Flutter, no storage. Extracted from a shipped production app;
+the crypto is byte-identical to that source.
 
 This is an L0 foundation package: it has **zero domain coupling** (no app
 models, no domain types — nothing about what the apps built on it actually do)
@@ -33,13 +33,14 @@ place:
   (OAuth providers, Firebase, passkeys) solve a different problem — they
   authenticate you *to a server*; none of them hand an app stable local keys
   for end-to-end encryption.
-- *Tiered seed durability with honest failure semantics.* The seed is
-  mirrored local + cloud (Keychain / iCloud Keychain, EncryptedSharedPreferences /
-  Block Store), and `hasIdentity()` is deliberately tri-state: "couldn't
-  read" is not "absent". That distinction — and `save()` refusing to
-  overwrite an existing seed — exists because collapsing it to a bool caused
-  a real re-onboard/seed-clobber bug class in the production app this was
-  extracted from.
+- *Persistence is deliberately not this package's problem.* Identity stays a
+  pure function; durable seed storage (secure-enclave + cloud tiering,
+  presence-unknown tri-state, clobber-guarded writes) lives in a separate
+  storage layer that consuming apps compose with `identityFromSeed`. That
+  separation is itself a hard-won lesson: the storage failure semantics
+  ("couldn't read" is never "absent") were built after a real
+  re-onboard/seed-clobber bug class in the production app this was
+  extracted from — and they evolve on storage's schedule, not crypto's.
 - *A de-linked store-binding token.* The account token disclosed to
   Apple/Google for purchases is a sibling hash of the uid, not the uid — so
   store records can't be joined against backend records. A privacy property
@@ -123,24 +124,10 @@ be doing, and a way to hold us to it.
   and canonical-JSON encoding for byte-exact signatures.
 - **`identity.dart`** — `Identity` (seed → X25519 keypair → uid), BIP39 recovery
   phrase round-trip, and the de-linked store-binding token.
-- **`secure_kv_store.dart`** (+ `storage_read.dart`, `kv_tier.dart`,
-  `tier_policy.dart`) — generic tiered secure storage: a sealed tri-state
-  `StorageRead` result (`Present` / `Absent` / `Unavailable` — an exhaustive
-  `switch` makes "failed read treated as absent" uncompilable), a pluggable
-  `KvTier` interface (ships `SecureStorageTier` and `BlockStoreTier`;
-  consumers can add e.g. a legacy `SharedPreferences` tier without this
-  package taking the dependency), a `TierPolicy` describing read order,
-  promote-on-read, migration-only tiers, platform arming, cloud sync-lag
-  retry and write fan-out, plus `TypedKey` views.
-- **`identity_store.dart`** — tiered durable storage of the 32-byte seed:
-  local Keychain/EncryptedSharedPreferences + iCloud Keychain (iOS) + Block
-  Store (Android), built on `SecureKvStore`. Includes the hard-won
-  presence-unknown guard (a failed read must never be treated as "no
-  identity").
-- **`block_store_client.dart`** — Android Block Store MethodChannel wrapper.
-- **`package:identity/testing.dart`** — `FakeKvTier`, a fault-injectable
-  in-memory tier for consumer test suites ("one tier fails while another
-  succeeds" on the host, no platform channels).
+That's the whole Dart surface — three files. The tiered secure-storage layer
+that used to live here (`SecureKvStore`, `StorageRead`, `IdentityStore`,
+`BlockStoreClient`) moved to a separate storage package in 1.0.0; consuming
+apps compose their seed store from that layer plus [`identityFromSeed`].
 
 ## Per-app namespace: `IdentityConfig`
 
@@ -173,11 +160,13 @@ const acmeIdentity = IdentityConfig(
 
 ```dart
 final sodium = await SodiumInit.init();
-final store = IdentityStore(acmeIdentity);
 
-var identity = await store.load(sodium);
-identity ??= generateIdentity(sodium);
-await store.save(identity);            // refuses to clobber an existing seed
+// Persistence is composed by the app: read the seed from wherever the app
+// durably keeps it (a clobber-guarded secure-enclave slot), or mint one.
+final storedSeed = await readSeedFromAppStorage();     // app-side
+final identity = storedSeed != null
+    ? identityFromSeed(sodium, storedSeed)
+    : generateIdentity(sodium);
 
 final backupKey = deriveBackupKey(
   sodium, identity.seed, domain: acmeIdentity.backupKeyDomain,
@@ -186,45 +175,11 @@ final backupKey = deriveBackupKey(
 final phrase = seedToMnemonic(identity.seed.extractBytes());  // 24-word phrase
 ```
 
-### Tiered storage for your own keys: `SecureKvStore`
-
-The tiering `IdentityStore` uses for the seed is available generically — a
-domain store reduces to a key, a codec, and a `TierPolicy`:
-
-```dart
-final kv = SecureKvStore(TierPolicy(
-  tiers: [
-    SecureStorageTier('local', localStorage),
-    SecureStorageTier('cloud', icloudStorage),
-    SecureStorageTier('legacy', legacyStorage, writable: false), // migrate-and-retire
-  ],
-  retryDelay: const Duration(seconds: 2),
-  retryTiers: const {'cloud'},
-));
-
-const profileKey = TypedKey<Profile>('acme.profile',
-    encode: encodeProfile, decode: decodeProfile);
-
-switch (await kv.readTyped(profileKey)) {
-  case Present(:final value): useProfile(value);
-  case Absent(): startOnboarding();            // confirmed: no data anywhere
-  case Unavailable(:final cause): report(cause); // couldn't read — NOT "no data"
-}
-```
-
-The `sealed` result is the point: a failed or corrupt read can't be mistaken
-for absence without the compiler objecting. For tests,
-`package:identity/testing.dart` exports `FakeKvTier` with per-key and
-wholesale fault injection.
-
-## Native requirement (Android only)
-
-`IdentityStore`'s Block Store tier needs a native MethodChannel handler on the
-host app's `blockStoreChannel`, implementing `get`/`put`/`delete` against the
-Play Services Block Store API (the host app supplies the
-`com.google.android.gms:play-services-auth-blockstore` dependency). Absent a
-handler, the tier no-ops safely. iCloud Keychain on iOS works through
-`flutter_secure_storage` options with no native code.
+The app-side seed store must honor two rules this package used to enforce
+when it owned persistence (and its storage layer still does): a failed read
+is **never** "no identity" (never route an established user to onboarding on
+a read error), and a fresh seed must **never** overwrite an existing one
+without explicit recovery intent.
 
 ## Native crypto mirrors: `native/ios/` and `native/android/`
 
@@ -287,23 +242,20 @@ three-way binding parity below instead.
 
 ### Dart
 
-Prereqs: Flutter SDK.
+Prereqs: the Dart SDK (no Flutter needed).
 
 ```
-flutter pub get
-flutter test
+dart pub get
+dart test
 ```
 
-Expect `All tests passed!` — 117 tests across `crypto_test.dart` (round-trips,
-failure modes, and the backup/signing known-answer vectors),
-`identity_test.dart` (identity determinism + the store-binding parity vector),
-`crypto_vectors_test.dart` (the golden-vector suite), and
-`secure_kv_store_test.dart` / `identity_store_test.dart` /
-`block_store_client_test.dart` (the storage tier/tri-state decision logic, run
-against injected fakes).
+Expect `All tests passed!` — `crypto_test.dart` (round-trips, failure modes,
+and the backup/signing known-answer vectors), `identity_test.dart` (identity
+determinism + the store-binding parity vector), and `crypto_vectors_test.dart`
+(the golden-vector suite).
 
 ```
-flutter analyze
+dart analyze
 ```
 
 Expect `No issues found!`.
@@ -395,7 +347,7 @@ binaries embed these — preserve the upstream notices):
 |---|---|---|
 | [libsodium](https://github.com/jedisct1/libsodium) | all three implementations | ISC |
 | [`sodium`](https://pub.dev/packages/sodium) (Dart bindings) | Dart | BSD-3-Clause |
-| [`bip39`](https://pub.dev/packages/bip39), [`crypto`](https://pub.dev/packages/crypto), [`flutter_secure_storage`](https://pub.dev/packages/flutter_secure_storage) | Dart | BSD-3-Clause |
+| [`bip39`](https://pub.dev/packages/bip39), [`crypto`](https://pub.dev/packages/crypto) | Dart | BSD-3-Clause |
 | [swift-sodium](https://github.com/jedisct1/swift-sodium) (`Clibsodium`) | `native/ios/` | ISC |
 | [lazysodium-android](https://github.com/terl/lazysodium-android) | `native/android/` | MPL-2.0 |
 | Gradle wrapper | `native/android/` build | Apache-2.0 |
@@ -404,5 +356,4 @@ Note on `lazysodium-android`: it is used **only** as the delivery vehicle for
 its bundled, 16 KB-aligned `libsodium.so` (ISC) — its MPL-2.0 Java classes are
 loaded never and modified never, so MPL's file-level copyleft imposes nothing
 here; apps wanting a pure-permissive dependency tree can exclude those classes
-in packaging. Android's Block Store itself comes from Google Play Services
-(proprietary), which the consuming app supplies.
+in packaging.

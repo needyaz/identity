@@ -6,9 +6,12 @@ Guidance for Claude Code when working in this package.
 
 `identity` is the **L0 foundation** for the Luci family of apps:
 generic libsodium crypto primitives, seed→keypair→uid→BIP39 identity, the
-de-linked store-binding token, Ed25519 signing, generic tiered secure storage
-(`SecureKvStore` + tri-state `StorageRead`), and tiered durable storage of
-the seed (Keychain / iCloud Keychain / Android Block Store) built on it.
+de-linked store-binding token, and Ed25519 signing. **Pure Dart** — no
+Flutter, no storage. Since 1.0.0, durable seed persistence (and the tiered
+secure-storage layer it was built on) lives in the separate private
+`storage` package; consuming apps compose the two. This package must
+**never** grow a dependency on `storage` (or any private repo): identity is
+public, and a public package must carry no private dependency.
 
 It was **extracted from a shipped production app**. The crypto is byte-identical
 to that source — only the app-specific namespace strings were lifted into
@@ -45,35 +48,20 @@ must use exactly the values it already shipped.
 
 ## Conventions
 
-- Keep this package **Flutter-widget-free**. The only Flutter coupling is
-  secure storage (`flutter_secure_storage` + the Block Store MethodChannel). If
-  a pure-Dart consumer is ever needed, split a `identity_core` (crypto +
-  identity, pure Dart) out and leave storage here.
+- Keep this package **pure Dart** — no `flutter` imports, no storage, no
+  platform channels. That purity is the point of the 1.0.0 split (it is the
+  `identity_core` end-state the pre-1.0 docs anticipated); anything needing
+  a platform belongs in `storage` or the apps.
 - `crypto.dart` holds generic primitives only — no payload/domain types ever.
-- The `hasIdentity()` / `IdentitySeedPresenceUnknown` tri-state is load-bearing:
-  a failed secure-storage read must **never** collapse to "no identity" (that is
-  the root of a recurring re-onboard/seed-clobber bug class seen in production).
-  Don't "simplify" it to a bool.
-- The generic storage layer (`storage_read.dart`, `kv_tier.dart`,
-  `tier_policy.dart`, `secure_kv_store.dart`) makes that same rule structural:
-  `StorageRead` is `sealed` with `Absent` ≠ `Unavailable` — never add a
-  `valueOrNull` (that escape hatch is exactly how the bug comes back), and a
-  decode failure in `readTyped` must map to `Unavailable`, never `Absent`.
-  `IdentityStore` sits on this layer; its public API, tier names
-  (`local`/`cloud`/`blockStore`), and `identity_store_test.dart` must not
-  change when the layer evolves. There is deliberately **no** read-modify-write
-  helper: the optimistic-version-counter one was removed (CHANGELOG 0.6.0) after a
-  reproduced residual race, and any concurrency-control replacement (a lock,
-  a `Future`-chained queue) is worse — the correct fix for list-shaped values
-  is per-record keys. Don't add one back.
-- `package:identity/testing.dart` exports `FakeKvTier` for consumer suites —
-  it is public API; keep it dependency-light (no `flutter_test`).
-
-## Native requirement
-
-The Android Block Store tier needs a host-app Kotlin MethodChannel handler on
-`IdentityConfig.blockStoreChannel`. Absent that handler it no-ops safely. iOS
-iCloud Keychain works through `flutter_secure_storage` options with no native code.
+- `IdentityConfig.seedStorageKey` / `.blockStoreChannel` are passive per-app
+  namespace data the app forwards to its storage layer — this package never
+  reads them, but they stay in the config so each app's namespace lives in
+  one place. Same frozen-once-shipped rule as the domains.
+- The seed-store invariants ("a failed read is never no-identity"; "never
+  overwrite a seed without explicit recovery intent") are documented in
+  SPEC.md "Secure storage" and enforced by the storage layer the apps
+  compose — keep the SPEC section intact so the contract survives the
+  package boundary.
 
 ## Native crypto mirrors — `native/ios/` and `native/android/`
 
@@ -106,14 +94,9 @@ in the apps, not here.
 
 ## Testing
 
-`flutter test` — crypto round-trips + failure modes, identity/BIP39 determinism,
-the store-binding parity vector, the `SecureKvStore` tier-orchestration suite
-(run against `FakeKvTier`), and the `IdentityStore`/`BlockStoreClient`
-tier/tri-state logic (via the constructor test seams — fakes injected for
-storage, platform flag, and retry delay; the seams' defaults must always
-preserve shipped behavior exactly). `flutter analyze` must be clean
-(`flutter_lints`). The real platform-channel storage behavior is still only
-exercised by a consuming app on a device/sim.
+`dart test` — crypto round-trips + failure modes, identity/BIP39 determinism,
+the store-binding parity vector, and the golden-vector suite. `dart analyze`
+must be clean (`lints/recommended`). No Flutter SDK needed.
 `native/ios/`: `swift test`. `native/android/`: `./gradlew :crypto:connectedDebugAndroidTest`
 (emulator required).
 

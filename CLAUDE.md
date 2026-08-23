@@ -104,4 +104,4 @@ must be clean (`lints/recommended`). No Flutter SDK needed.
 
 - `SPEC.md` — the full cryptographic contract (derivations, wire formats,
   known-answer vectors). `README.md` — usage.
-- Work on `main` (no feature branches). Commit only when explicitly asked.
+- Feature branches + PRs are the normal workflow. Commit only when explicitly asked.

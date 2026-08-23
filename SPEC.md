@@ -117,7 +117,7 @@ derivation, no BIP39, no secure storage, no app business logic.
 This package no longer persists the seed — identity is a pure function, and
 durable storage lives in a separate storage layer that consuming apps compose
 with `identityFromSeed`. Two invariants any conforming seed store must
-uphold (they were enforced here through 0.9.x, and the production storage
+uphold (they were enforced here through 0.8.x, and the production storage
 layer still enforces them):
 
 1. **A failed read is never "no identity."** Presence may only be reported

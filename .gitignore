@@ -42,3 +42,6 @@ native/android/**/build/
 native/android/**/.cxx/
 native/android/local.properties
 *.iml
+
+# Local dependency overrides (dev-machine only)
+/pubspec_overrides.yaml

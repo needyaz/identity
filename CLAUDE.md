@@ -6,9 +6,11 @@ Guidance for Claude Code when working in this package.
 
 `identity` is the **L0 foundation** for the Luci family of apps:
 generic libsodium crypto primitives, seed→keypair→uid→BIP39 identity, the
-de-linked store-binding token, Ed25519 signing, generic tiered secure storage
-(`SecureKvStore` + tri-state `StorageRead`), and tiered durable storage of
-the seed (Keychain / iCloud Keychain / Android Block Store) built on it.
+de-linked store-binding token, Ed25519 signing, and tiered durable storage of
+the seed (Keychain / iCloud Keychain / Android Block Store). The generic
+tiered-storage kernel it sits on (`SecureKvStore` + tri-state `StorageRead`)
+lives in **`package:storage`** (pinned git dependency) and is re-exported
+from `identity.dart`/`testing.dart` so consumer imports never changed.
 
 It was **extracted from a shipped production app**. The crypto is byte-identical
 to that source — only the app-specific namespace strings were lifted into
@@ -45,29 +47,27 @@ must use exactly the values it already shipped.
 
 ## Conventions
 
-- Keep this package **Flutter-widget-free**. The only Flutter coupling is
-  secure storage (`flutter_secure_storage` + the Block Store MethodChannel). If
-  a pure-Dart consumer is ever needed, split a `identity_core` (crypto +
-  identity, pure Dart) out and leave storage here.
+- Keep this package **Flutter-widget-free**. The only Flutter coupling left
+  is `IdentityStore`'s default `FlutterSecureStorage` tiers (the kernel's
+  coupling moved to `package:storage` with it). If a pure-Dart consumer is
+  ever needed, the remaining split is `identity_core` (crypto + identity)
+  vs `IdentityStore`.
 - `crypto.dart` holds generic primitives only — no payload/domain types ever.
 - The `hasIdentity()` / `IdentitySeedPresenceUnknown` tri-state is load-bearing:
   a failed secure-storage read must **never** collapse to "no identity" (that is
   the root of a recurring re-onboard/seed-clobber bug class seen in production).
   Don't "simplify" it to a bool.
-- The generic storage layer (`storage_read.dart`, `kv_tier.dart`,
-  `tier_policy.dart`, `secure_kv_store.dart`) makes that same rule structural:
-  `StorageRead` is `sealed` with `Absent` ≠ `Unavailable` — never add a
-  `valueOrNull` (that escape hatch is exactly how the bug comes back), and a
-  decode failure in `readTyped` must map to `Unavailable`, never `Absent`.
+- The generic storage layer (now `package:storage`) makes that same rule
+  structural: `StorageRead` is `sealed` with `Absent` ≠ `Unavailable` — its
+  cardinal rules (no `valueOrNull`, decode failure → `Unavailable`, no
+  read-modify-write helper) live in storage's own CLAUDE.md/SPEC.md.
   `IdentityStore` sits on this layer; its public API, tier names
   (`local`/`cloud`/`blockStore`), and `identity_store_test.dart` must not
-  change when the layer evolves. There is deliberately **no** read-modify-write
-  helper: the optimistic-version-counter one was removed (CHANGELOG 0.6.0) after a
-  reproduced residual race, and any concurrency-control replacement (a lock,
-  a `Future`-chained queue) is worse — the correct fix for list-shaped values
-  is per-record keys. Don't add one back.
-- `package:identity/testing.dart` exports `FakeKvTier` for consumer suites —
-  it is public API; keep it dependency-light (no `flutter_test`).
+  change when the layer evolves — a storage version bump that breaks
+  `identity_store_test.dart` is a breaking change there, not a fix here.
+- `package:identity/testing.dart` re-exports `FakeKvTier` from
+  `package:storage/testing.dart` for consumer suites — the re-export is
+  public API; keep it.
 
 ## Native requirement
 

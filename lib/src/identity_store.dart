@@ -5,14 +5,10 @@ import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:sodium/sodium.dart';
+import 'package:storage/storage.dart';
 
-import 'block_store_client.dart';
 import 'identity.dart';
 import 'identity_config.dart';
-import 'kv_tier.dart';
-import 'secure_kv_store.dart';
-import 'storage_read.dart';
-import 'tier_policy.dart';
 
 /// Thrown by [IdentityStore.save] when a seed already exists and `force` was not
 /// set — the guard that makes new-identity creation non-destructive.

@@ -1,3 +1,16 @@
+## 0.9.0
+
+- **The tiered-storage kernel moved to `package:storage`** (private repo,
+  pinned git dependency @ v0.1.0): `StorageRead`, `KvTier` +
+  `SecureStorageTier` + `BlockStoreTier`, `TierPolicy`, `SecureKvStore`,
+  `BlockStoreClient`, and `FakeKvTier`, with their test suites — verbatim,
+  no behavior change. `identity.dart` re-exports `package:storage/storage.dart`
+  and `testing.dart` re-exports its `FakeKvTier`, so every existing consumer
+  import keeps compiling unchanged. `IdentityStore` is unchanged apart from
+  importing the kernel from its new home; `identity_store_test.dart` passes
+  as-is. Storage-layer behavior history up to this point stays in this
+  CHANGELOG (0.4.0–0.8.0); it continues in storage's.
+
 ## 0.8.0
 
 - **Promote-on-read honors never-overwrite-on-doubt.** A cloud-tier hit was

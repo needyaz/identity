@@ -1,6 +1,6 @@
 name: identity
 description: "Shared identity, key derivation, secure-storage tiering, and crypto primitives for Luci apps."
-version: 0.8.0
+version: 0.9.0
 publish_to: 'none'
 
 environment:
@@ -17,7 +17,14 @@ dependencies:
   crypto: ^3.0.3            # SHA-256 for UID + store-binding derivation
 
   # Secure storage
-  flutter_secure_storage: ^9.2.4   # iOS Keychain / Android EncryptedSharedPreferences
+  flutter_secure_storage: ^9.2.4   # iOS Keychain / Android EncryptedSharedPreferences (IdentityStore's default tiers)
+  storage:                          # tiered kernel: SecureKvStore, StorageRead, KvTier, TierPolicy
+    git:
+      url: https://github.com/needyaz/storage.git
+      ref: v0.1.0
+  # Local sibling development: override with a gitignored pubspec_overrides.yaml —
+  #   dependency_overrides:
+  #     storage: {path: ../storage}
 
 dev_dependencies:
   flutter_test:

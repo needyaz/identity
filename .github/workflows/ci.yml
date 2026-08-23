@@ -15,6 +15,11 @@ jobs:
         with:
           channel: stable
           cache: true
+      # package:storage is a private repo; GITHUB_TOKEN is scoped to this repo
+      # only, so pub's git fetch needs a token with read access to
+      # needyaz/storage (fine-grained PAT, Contents: read) in the
+      # STORAGE_REPO_TOKEN secret.
+      - run: git config --global url."https://x-access-token:${{ secrets.STORAGE_REPO_TOKEN }}@github.com/needyaz/".insteadOf "https://github.com/needyaz/"
       - run: flutter pub get
       - run: flutter analyze
       - run: flutter test

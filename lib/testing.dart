@@ -1,7 +1,7 @@
-/// Test doubles for `package:identity`'s storage layer.
+/// Test doubles for the storage layer `package:identity` sits on.
 ///
-/// Import this (not `package:identity/identity.dart`) from test code that
-/// needs to fault-inject storage tiers:
+/// `FakeKvTier` now lives in `package:storage/testing.dart`; this re-export
+/// keeps existing consumer imports working:
 ///
 /// ```dart
 /// import 'package:identity/testing.dart';
@@ -11,4 +11,4 @@
 /// ```
 library;
 
-export 'src/fake_kv_tier.dart';
+export 'package:storage/testing.dart';

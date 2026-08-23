@@ -10,8 +10,10 @@
 /// [storeBindingDomain]). Once an app has shipped, NEVER change them — doing so
 /// rotates every user's derived keys out from under their stored data.
 class IdentityConfig {
-  /// Secure-storage key under which the 32-byte seed is persisted
-  /// (Keychain / iCloud Keychain / EncryptedSharedPreferences / Block Store).
+  /// Passive namespace key for the app's own seed store. This package no
+  /// longer persists the seed (see SPEC.md "Secure storage") — the value is
+  /// only forwarded to whatever storage layer the app composes with
+  /// `identityFromSeed`; this package never reads it.
   final String seedStorageKey;
 
   /// BLAKE2b domain for `deriveBackupKey`. UTF-8 length must be <= 16 bytes
@@ -25,8 +27,10 @@ class IdentityConfig {
   /// SHA-256 domain prefix for `deriveStoreBindingToken`. Must be pure ASCII.
   final String storeBindingDomain;
 
-  /// MethodChannel name the host app's native Block Store handler listens on
-  /// (Android only). Must match the app's native registration.
+  /// Passive namespace value for the app's own Android Block Store tier
+  /// (Android only). This package no longer touches storage (see SPEC.md
+  /// "Secure storage") — the value is only forwarded to whatever storage
+  /// layer the app composes; this package never reads it.
   final String blockStoreChannel;
 
   const IdentityConfig({

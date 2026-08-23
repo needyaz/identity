@@ -14,7 +14,16 @@ jobs:
       - uses: dart-lang/setup-dart@v1
         with:
           sdk: stable
-      - run: sudo apt-get update && sudo apt-get install -y libsodium23
+      - uses: actions/cache@v4
+        with:
+          path: ~/.pub-cache
+          key: ${{ runner.os }}-pub-${{ hashFiles('pubspec.yaml') }}
+          restore-keys: |
+            ${{ runner.os }}-pub-
+      - uses: awalsh128/cache-apt-pkgs-action@v1
+        with:
+          packages: libsodium23
+          version: 1.0
       - run: dart pub get
       - run: dart analyze
       - run: dart test

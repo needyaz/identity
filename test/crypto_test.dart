@@ -10,6 +10,50 @@ import 'package:identity/identity.dart';
 String _hex(List<int> bytes) =>
     bytes.map((b) => b.toRadixString(16).padLeft(2, '0')).join();
 
+/// A [PrecalculatedBox] double that counts [dispose] calls and lets a test
+/// force [openEasy] to throw, so the disposing wrappers' `finally` can be
+/// exercised without depending on real libsodium memory-safety behavior.
+class _CountingBox implements PrecalculatedBox {
+  _CountingBox(this._delegate, {this.throwOnOpen = false});
+
+  final PrecalculatedBox _delegate;
+  final bool throwOnOpen;
+  int disposeCalls = 0;
+
+  @override
+  Uint8List easy({required Uint8List message, required Uint8List nonce}) =>
+      _delegate.easy(message: message, nonce: nonce);
+
+  @override
+  Uint8List openEasy({required Uint8List cipherText, required Uint8List nonce}) {
+    if (throwOnOpen) {
+      throw StateError('forced openEasy failure');
+    }
+    return _delegate.openEasy(cipherText: cipherText, nonce: nonce);
+  }
+
+  @override
+  DetachedCipherResult detached({
+    required Uint8List message,
+    required Uint8List nonce,
+  }) =>
+      _delegate.detached(message: message, nonce: nonce);
+
+  @override
+  Uint8List openDetached({
+    required Uint8List cipherText,
+    required Uint8List mac,
+    required Uint8List nonce,
+  }) =>
+      _delegate.openDetached(cipherText: cipherText, mac: mac, nonce: nonce);
+
+  @override
+  void dispose() {
+    disposeCalls++;
+    _delegate.dispose();
+  }
+}
+
 void main() {
   late Sodium sodium;
 
@@ -51,6 +95,54 @@ void main() {
       expect(dec['msg'], 'hi');
       aToB.dispose();
       bToA.dispose();
+    });
+
+    test('encryptBlobWithBoxDisposing disposes the box on success', () {
+      final a = generateIdentity(sodium);
+      final b = generateIdentity(sodium);
+      final aToB =
+          deriveSharedSecret(sodium, b.keyPair.publicKey, a.keyPair.secretKey);
+      final box = _CountingBox(aToB);
+
+      final enc = encryptBlobWithBoxDisposing(sodium, {'msg': 'hi'}, box);
+
+      expect(enc, isNotEmpty);
+      expect(box.disposeCalls, 1);
+    });
+
+    test('decryptBlobWithBoxDisposing disposes the box on success', () {
+      final a = generateIdentity(sodium);
+      final b = generateIdentity(sodium);
+      final aToB =
+          deriveSharedSecret(sodium, b.keyPair.publicKey, a.keyPair.secretKey);
+      final bToA =
+          deriveSharedSecret(sodium, a.keyPair.publicKey, b.keyPair.secretKey);
+      final enc = encryptBlobWithBox(sodium, {'msg': 'hi'}, aToB);
+      aToB.dispose();
+      final box = _CountingBox(bToA);
+
+      final dec =
+          decryptBlobWithBoxDisposing(sodium, enc, box) as Map<String, dynamic>;
+
+      expect(dec['msg'], 'hi');
+      expect(box.disposeCalls, 1);
+    });
+
+    test('decryptBlobWithBoxDisposing disposes the box even when it throws',
+        () {
+      final a = generateIdentity(sodium);
+      final b = generateIdentity(sodium);
+      final aToB =
+          deriveSharedSecret(sodium, b.keyPair.publicKey, a.keyPair.secretKey);
+      final bToA =
+          deriveSharedSecret(sodium, a.keyPair.publicKey, b.keyPair.secretKey);
+      final enc = encryptBlobWithBox(sodium, {'msg': 'hi'}, aToB);
+      aToB.dispose();
+      final box = _CountingBox(bToA, throwOnOpen: true);
+
+      expect(() => decryptBlobWithBoxDisposing(sodium, enc, box),
+          throwsA(isA<StateError>()));
+      expect(box.disposeCalls, 1);
     });
   });
 

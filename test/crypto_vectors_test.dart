@@ -2,7 +2,7 @@ import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
 
-import 'package:flutter_test/flutter_test.dart';
+import 'package:test/test.dart';
 import 'package:identity/identity.dart';
 
 // Golden-vector crypto parity (see ios/Tests/IdentityCryptoTests/CryptoVectorsTests.swift

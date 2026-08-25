@@ -13,9 +13,9 @@ secure-storage layer it was built on) lives in the separate private
 **never** grow a dependency on `storage` (or any private repo): identity is
 public, and a public package must carry no private dependency.
 
-It was **extracted from a shipped production app**. The crypto is byte-identical
-to that source — only the app-specific namespace strings were lifted into
-`IdentityConfig`.
+It was **extracted from a shipped production app** — this package *is* that
+app's crypto, moved in place, not a reimplementation. Only the app-specific
+namespace strings were lifted out into `IdentityConfig`.
 
 It is a standalone package consumed as a path dependency. It has **zero domain
 coupling** — no app models, no domain types. `groups` depends on this; apps

@@ -2,120 +2,51 @@
 
 [![CI](https://github.com/needyaz/identity/actions/workflows/ci.yml/badge.svg)](https://github.com/needyaz/identity/actions/workflows/ci.yml)
 
-Shared identity, key derivation, and crypto primitives for Luci apps.
-Pure Dart — no Flutter, no storage. Extracted from a shipped production app;
-the crypto is byte-identical to that source.
+Identity, key derivation, and crypto primitives for Luci apps. Pure Dart —
+no Flutter, no storage. Extracted from a shipped production app; the crypto
+is byte-identical to that source.
 
-This is an L0 foundation package: it has **zero domain coupling** (no app
-models, no domain types — nothing about what the apps built on it actually do)
-and is the substrate the rest of a Luci app builds on.
+L0 foundation package: no app models, no domain types, no coupling to what
+an app built on it actually does.
 
-## Why this exists
+## Design
 
-The short version of "why did you build your own thing":
+Identity is a pure function of `(seed, domain)`: seed in, keypair, uid,
+backup key, signing key, and a 24-word recovery phrase out. Computation is
+entirely on-device, using stock libsodium primitives — X25519 `crypto_box`,
+XSalsa20-Poly1305 `secretbox`, sealed boxes, Ed25519 detached signatures,
+keyed BLAKE2b for key derivation — plus BIP39 for the recovery phrase. No
+novel cryptography.
 
-**We didn't build crypto — we composed libsodium.** There is no novel
-primitive or protocol in this repo. Every operation is a stock libsodium
-construction — X25519 `crypto_box`, XSalsa20-Poly1305 `secretbox`, sealed
-boxes, Ed25519 detached signatures, keyed BLAKE2b for key derivation — plus
-standard BIP39 for the recovery phrase. The crypto surface is thin glue with
-one fixed, boring wire format: `base64(nonce ‖ ciphertext)`. Read
-`lib/src/crypto.dart`; it's under 300 lines and mostly doc comments.
+A single seed derives separate keys per purpose (backup encryption,
+signing, store binding) under distinct domains, so keys never collide or
+cross-join across apps or purposes. The domains are fixed public inputs to
+the derivation; see the `IdentityConfig` section below for why they must
+never change once shipped.
 
-**The glue is the thing that doesn't exist off the shelf.** What this package
-actually adds is architecture, not cryptography, and each piece earns its
-place:
+The server side holds no account secret and no key registry: it stores
+opaque ciphertext and checks signatures. The only outputs that leave the
+device are the uid (`SHA-256(pubkey)`), the store-binding token (a hash of
+two public inputs), and Ed25519 verification against the signing key's
+public half. The backup key never leaves the device.
 
-- *One seed → domain-separated derived keys → one 24-word recovery phrase.*
-  A user has exactly one secret to back up; every app and every purpose
-  (backup encryption, signing, store binding) gets its own key, derived under
-  a distinct domain, so keys never collide or cross-join. Server-account SDKs
-  (OAuth providers, Firebase, passkeys) solve a different problem — they
-  authenticate you *to a server*; none of them hand an app stable local keys
-  for end-to-end encryption.
-- *Persistence is deliberately not this package's problem.* Identity stays a
-  pure function; durable seed storage (secure-enclave + cloud tiering,
-  presence-unknown tri-state, clobber-guarded writes) lives in a separate
-  storage layer that consuming apps compose with `identityFromSeed`. That
-  separation is itself a hard-won lesson: the storage failure semantics
-  ("couldn't read" is never "absent") were built after a real
-  re-onboard/seed-clobber bug class in the production app this was
-  extracted from — and they evolve on storage's schedule, not crypto's.
-- *A de-linked store-binding token.* The account token disclosed to
-  Apple/Google for purchases is a sibling hash of the uid, not the uid — so
-  store records can't be joined against backend records. A privacy property
-  no generic library provides.
-- *Native mirrors, because the Dart runtime isn't always there.* Notification
-  service extensions and killed-state evaluators can't reach Flutter memory.
-  The Android mirror hand-rolls a thin JNI bridge specifically because JNA's
-  `libjnidispatch.so` crashes on Android 15's 16 KB page-size devices — a
-  documented workaround, not not-invented-here.
+Persistence is not this package's problem. Durable seed storage (secure
+enclave, cloud tiering, tri-state reads, clobber-guarded writes) lives in a
+separate storage package that consuming apps compose with
+`identityFromSeed`.
 
-### The server stays dumb on purpose
+The store-binding token is a hash of the uid, not the uid itself, so store
+records (Apple/Google purchase records) can't be joined against backend
+records.
 
-The design claim underneath all of this: **identity is a pure function** —
-`(seed, domain) → keypair, uid, backup key, signing key, recovery phrase` —
-computed entirely on the device. Because it is a pure function, the server
-side needs no account state, no key registry, no escrow: it stores opaque
-ciphertext, hands it back, and checks signatures. Of the three derivations,
-only public-side outputs ever surface beyond the device — the uid
-(`SHA-256(pubkey)`), the store-binding token (a hash of two public inputs),
-and Ed25519 *verification* against the derived signing key's public half.
-The backup key derived under `backupKeyDomain` never leaves the device; what
-a server holds is a blob it cannot open.
+Native mirrors exist because the Dart runtime isn't always reachable —
+notification service extensions and killed-state evaluators run outside
+Flutter's memory. See "Native crypto mirrors" below.
 
-The consequences are the point:
-
-- **No accounts to breach.** There is no server-side secret whose loss
-  compromises a user's keys.
-- **Verification is public-key math.** Any party can reproduce it from
-  `SPEC.md` without being trusted with anything.
-- **Recovery needs no server cooperation.** The 24 words re-derive
-  everything; there is nothing to reset and no one to ask.
-
-It is also exactly why domain strings are frozen once shipped (see the
-`IdentityConfig` warning below): the domains are the fixed public inputs to
-that pure function. Change one and every output changes — and no migration
-path can exist, because no party anywhere ever held a mapping between old
-and new keys. The immutability rule is not discipline; it is the flip side
-of having no trusted server.
-
-**You don't have to take our word for it.** Three independent implementations
-(Dart, Swift, Kotlin/JNI) are pinned against one shared golden-vector file,
-and every derivation is pinned by known-answer vectors computed with an
-*independent* implementation (Python `hashlib` / `cryptography`) rather than
-by the code testing itself. See "Verifying this works" below and `SPEC.md`
-for the full contract.
-
-The fair criticism that remains: key *management* — not primitives — is where
-real-world failures live, and this package does hand-roll that. The
-presence-unknown tri-state, the overwrite guard, and the parity vectors are
-the direct response; treat `SPEC.md` as the auditable statement of exactly
-what this code promises.
-
-## Why this is public
-
-Not because anyone needs it as a dependency. The apps built on this package
-make claims — end-to-end encrypted, recoverable from a 24-word phrase, "we
-cannot read your data" — that users normally have to take on faith. This
-package is the layer where those claims are actually implemented, so it is
-published: "audit it yourself" should be a literal offer, not a figure of
-speech. The `SPEC.md` contract, the independently-computed known-answer
-vectors, and the three-implementation parity suite below exist to make that
-audit cheap for anyone with a checkout.
-
-You *can* use it — it's MIT, and the `IdentityConfig` seam means nothing in
-here is tied to our apps — but adoption is a side effect, not the goal. Read
-it first as a demonstration of how we handle the security-critical parts of
-what we ship: the contract written down before it's defended, failure
-semantics treated as API (a failed read is never "no data"), and known gaps
-stated here rather than left for a reader to find.
-
-The honest limit of the offer: a public repo shows the code we maintain and
-test, not the bytes inside a given app-store binary — tying those together
-would take reproducible builds, which this repo does not claim. What it does
-give you is a precise, runnable statement of what the apps are *supposed* to
-be doing, and a way to hold us to it.
+Each derivation is pinned by known-answer vectors computed with an
+independent implementation (Python `hashlib` / `cryptography`), and three
+implementations (Dart, Swift, Kotlin/JNI) are checked against one shared
+golden-vector file. See "Verifying this works" and `SPEC.md`.
 
 ## What's in here
 
@@ -124,10 +55,11 @@ be doing, and a way to hold us to it.
   and canonical-JSON encoding for byte-exact signatures.
 - **`identity.dart`** — `Identity` (seed → X25519 keypair → uid), BIP39 recovery
   phrase round-trip, and the de-linked store-binding token.
+
 That's the whole Dart surface — three files. The tiered secure-storage layer
 that used to live here (`SecureKvStore`, `StorageRead`, `IdentityStore`,
 `BlockStoreClient`) moved to a separate storage package in 1.0.0; consuming
-apps compose their seed store from that layer plus [`identityFromSeed`].
+apps compose their seed store from that layer plus `identityFromSeed`.
 
 ## Per-app namespace: `IdentityConfig`
 
@@ -148,13 +80,13 @@ const acmeIdentity = IdentityConfig(
 
 > ⚠️ **Domain strings are frozen once shipped.** Identity is a pure function
 > of `(seed, domain)` with no server-side registry — changing a shipped
-> domain silently re-derives every user's keys out from under their stored
-> data, and no migration path can exist because no party ever held a mapping
-> between old and new. Only the public-side derivations (uid, store-binding
-> token, signature *verification*) are ever reproduced by a server verifier —
-> which must therefore use byte-identical domains; the backup key never
-> leaves the device. An app migrating onto this package must define an
-> `IdentityConfig` with exactly the values it already shipped.
+> domain re-derives every user's keys out from under their stored data, and
+> no migration path can exist because no party ever held a mapping between
+> old and new. Only the public-side derivations (uid, store-binding token,
+> signature verification) are ever reproduced by a server verifier — which
+> must therefore use byte-identical domains; the backup key never leaves the
+> device. An app migrating onto this package must define an `IdentityConfig`
+> with exactly the values it already shipped.
 
 ## Usage
 
@@ -177,26 +109,27 @@ final phrase = seedToMnemonic(identity.seed.extractBytes());  // 24-word phrase
 
 The app-side seed store must honor two rules this package used to enforce
 when it owned persistence (and its storage layer still does): a failed read
-is **never** "no identity" (never route an established user to onboarding on
-a read error), and a fresh seed must **never** overwrite an existing one
-without explicit recovery intent.
+is never treated as "no identity" (never route an established user to
+onboarding on a read error), and a fresh seed must never overwrite an
+existing one without explicit recovery intent.
 
 ## Native crypto mirrors: `native/ios/` and `native/android/`
 
 Some hosts need to encrypt/decrypt outside the Dart/Flutter runtime — a
 killed-state background evaluator, a notification service extension, or
-similar native-only code path that can't reach Flutter's memory. `native/ios/` and
-`native/android/` are standalone packages (not Dart, not consumed via `pubspec.yaml`)
-providing exactly that: a byte-identical native reimplementation of this
+similar native-only code path that can't reach Flutter's memory. `native/ios/`
+and `native/android/` are standalone packages (not Dart, not consumed via
+`pubspec.yaml`) providing a byte-identical native reimplementation of this
 package's generic crypto primitives (DH shared secret, `secretbox`/`box`
 blobs, sealed boxes) — nothing else. All three implementations are pinned by
 the same `test/crypto_vectors.json` golden vectors.
 
-- **`native/ios/`** — Swift Package (`IdentityCrypto` target), depends on
-  [`jedisct1/swift-sodium`](https://github.com/jedisct1/swift-sodium)'s
+- **`native/ios/IdentityCrypto/`** — Swift Package (`IdentityCrypto` target),
+  depends on [`jedisct1/swift-sodium`](https://github.com/jedisct1/swift-sodium)'s
   `Clibsodium` product for the libsodium C bindings (not the higher-level
   `Sodium` wrapper — this keeps the direct C-call style of the original file).
-  `cd native/ios && swift test` — runs headless on plain macOS, no simulator needed.
+  `cd native/ios/IdentityCrypto && swift test` — runs headless on plain macOS,
+  no simulator needed.
 - **`native/android/`** — standalone Gradle project, one library module (`:crypto`,
   namespace `blue.luci.identity`). Loads libsodium.so from the
   `lazysodium-android` AAR at runtime and resolves symbols via `dlsym` through
@@ -207,7 +140,7 @@ the same `test/crypto_vectors.json` golden vectors.
   since the JNI `dlopen`-by-soname trick only works inside a live Android
   linker namespace.
 - **Consuming-app requirement (Android)**: the JNI shim's `dlopen`-by-soname
-  needs the `.so` extracted to disk at install time. The *application* module
+  needs the `.so` extracted to disk at install time. The application module
   that packages this library must set
   `packagingOptions { jniLibs { useLegacyPackaging = true } }` — this can't be
   enforced from a library module.
@@ -225,9 +158,8 @@ the same `test/crypto_vectors.json` golden vectors.
 
 Three independent implementations of the same crypto (Dart, Swift, Kotlin/JNI),
 three independent test suites, all three pinned against the same
-`test/crypto_vectors.json` golden vectors. Anyone with a clean checkout can
-reproduce all of this — no backend, no account needed. CI runs the Dart,
-Swift, and Android-emulator suites on every push (badge above).
+`test/crypto_vectors.json` golden vectors. CI runs the Dart, Swift, and
+Android-emulator suites on every push (badge above).
 
 ### The derivation vectors, without trusting this repo
 
@@ -241,11 +173,11 @@ python3 tools/verify_vectors.py
 ```
 
 and it re-derives all five expected values from the spec'd algorithms and
-compares them (exit non-zero on any mismatch). The script's docstring states
-its scope honestly: it covers the domain-separated derivations; the
-box/sealed-box/secretbox golden vectors are libsodium constructions with no
-mainstream independent Python implementation, and their guarantee is the
-three-way binding parity below instead.
+compares them (exit non-zero on any mismatch). The script covers the
+domain-separated derivations only; the box/sealed-box/secretbox golden
+vectors are libsodium constructions with no mainstream independent Python
+implementation, and their guarantee is the three-way binding parity below
+instead.
 
 ### Dart
 
@@ -267,20 +199,20 @@ dart analyze
 
 Expect `No issues found!`.
 
-### iOS / Swift (`native/ios/`)
+### iOS / Swift (`native/ios/IdentityCrypto/`)
 
 Prereqs: macOS with Xcode / the Swift toolchain. First run needs network
 access once, to resolve the `swift-sodium` dependency from GitHub.
 
 ```
-cd native/ios
+cd native/ios/IdentityCrypto
 swift test
 ```
 
 Expect `Executed 19 tests, with 0 failures` — `NativeCryptoTests` (16 unit
 tests) + `CryptoVectorsTests` (3, the golden-vector suite, reading
-`test/crypto_vectors.json` directly off disk). This runs **headless on plain
-macOS — no simulator boot required**.
+`test/crypto_vectors.json` directly off disk). This runs headless on plain
+macOS — no simulator boot required.
 
 ### Android / Kotlin (`native/android/`)
 
@@ -306,7 +238,7 @@ cd native/android
 
 Expect `BUILD SUCCESSFUL`.
 
-Run the crypto-parity test — this one **must** run on a real emulator/device
+Run the crypto-parity test — this one must run on a real emulator/device
 (not a plain JVM unit test): the JNI `dlopen`-by-soname trick that loads
 libsodium only resolves inside a live Android linker namespace.
 
@@ -338,9 +270,8 @@ If all three suites above pass, the same `box_decrypt`, `secretbox_decrypt`,
 and `seal_open` vectors in `test/crypto_vectors.json` decrypted correctly
 through three independently-implemented code paths (Dart/libsodium-dart,
 Swift/swift-sodium's `Clibsodium`, Kotlin via a hand-written JNI bridge to
-`libsodium.so`). That's the actual claim this repo makes: not "the code looks
-right," but "three unrelated implementations agree on the same ciphertexts."
-A failure in any one of them is a crypto-mirror drift bug, not a test flake.
+`libsodium.so`). A failure in any one of them is a crypto-mirror drift bug,
+not a test flake.
 
 ## License
 
@@ -359,8 +290,7 @@ binaries embed these — preserve the upstream notices):
 | [lazysodium-android](https://github.com/terl/lazysodium-android) | `native/android/` | MPL-2.0 |
 | Gradle wrapper | `native/android/` build | Apache-2.0 |
 
-Note on `lazysodium-android`: it is used **only** as the delivery vehicle for
-its bundled, 16 KB-aligned `libsodium.so` (ISC) — its MPL-2.0 Java classes are
-loaded never and modified never, so MPL's file-level copyleft imposes nothing
-here; apps wanting a pure-permissive dependency tree can exclude those classes
-in packaging.
+`lazysodium-android` is used only as the delivery vehicle for its bundled,
+16 KB-aligned `libsodium.so` (ISC) — its MPL-2.0 Java classes are not loaded
+or modified, so MPL's file-level copyleft imposes nothing here; apps wanting
+a pure-permissive dependency tree can exclude those classes in packaging.

@@ -42,3 +42,7 @@ native/android/**/build/
 native/android/**/.cxx/
 native/android/local.properties
 *.iml
+
+# SwiftPM build products (package moved to native/ios/IdentityCrypto/)
+native/ios/**/.build/
+native/ios/**/Package.resolved

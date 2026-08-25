@@ -38,7 +38,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - run: swift test
-        working-directory: native/ios
+        working-directory: native/ios/IdentityCrypto
 
   android:
     name: Android mirror — native/android (emulator)

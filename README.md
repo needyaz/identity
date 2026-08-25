@@ -211,8 +211,15 @@ the same `test/crypto_vectors.json` golden vectors.
   that packages this library must set
   `packagingOptions { jniLibs { useLegacyPackaging = true } }` — this can't be
   enforced from a library module.
-- Not yet wired into any app. These two packages exist to be a fully working,
-  independently testable baseline first.
+- **Consumed by Mylo by path** (2026-08-25): the app's Runner and notification
+  service extension link `IdentityCrypto.podspec` (a CocoaPods view of the
+  same SwiftPM sources — `pod 'IdentityCrypto', :path => …`), its host test
+  package depends on `native/ios/IdentityCrypto` directly, and its Gradle
+  build includes `native/android/crypto` as a project. One copy, built by the
+  app and pinned here. The Swift package lives one directory down
+  (`native/ios/IdentityCrypto/`) because SwiftPM identifies local packages by
+  directory basename and a consuming app's own host package also lives in a
+  dir called `ios`.
 
 ## Verifying this works
 

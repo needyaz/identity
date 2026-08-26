@@ -6,12 +6,12 @@ Guidance for Claude Code when working in this package.
 
 `identity` is the **L0 foundation** for the Luci family of apps:
 generic libsodium crypto primitives, seed→keypair→uid→BIP39 identity, the
-de-linked store-binding token, and Ed25519 signing. **Pure Dart** — no
-Flutter, no storage. Since 1.0.0, durable seed persistence (and the tiered
-secure-storage layer it was built on) lives in the separate private
-`storage` package; consuming apps compose the two. This package must
-**never** grow a dependency on `storage` (or any private repo): identity is
-public, and a public package must carry no private dependency.
+de-linked store-binding token, and Ed25519 signing. Since 1.0.0, durable
+seed persistence (and the tiered secure-storage layer it was built on) lives
+in the separate private `storage` package; consuming apps compose the two.
+This package must **never** grow a dependency on `storage` (or any private
+repo): identity is public, and a public package must carry no private
+dependency.
 
 It was **extracted from a shipped production app** — this package is that
 app's crypto, moved in place. Only the app-specific namespace strings were

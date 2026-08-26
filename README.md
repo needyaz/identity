@@ -2,9 +2,8 @@
 
 [![CI](https://github.com/needyaz/identity/actions/workflows/ci.yml/badge.svg)](https://github.com/needyaz/identity/actions/workflows/ci.yml)
 
-Identity, key derivation, and crypto primitives for Luci apps. Pure Dart —
-no Flutter, no storage. This package is the crypto that shipped in a
-production app, extracted in place.
+Identity, key derivation, and crypto primitives for Luci apps. This package
+is the crypto that shipped in a production app, extracted in place.
 
 L0 foundation package: no app models, no domain types, no coupling to what
 an app built on it actually does.
@@ -164,7 +163,7 @@ instead.
 
 ### Dart
 
-Prereqs: the Dart SDK (no Flutter needed).
+Prereqs: the Dart SDK.
 
 ```
 dart pub get

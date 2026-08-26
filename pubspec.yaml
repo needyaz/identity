@@ -1,5 +1,5 @@
 name: identity
-description: "Shared identity, key derivation, and crypto primitives for Luci apps. Pure Dart — no Flutter, no storage."
+description: "Shared identity, key derivation, and crypto primitives for Luci apps."
 version: 1.0.0
 publish_to: 'none'
 

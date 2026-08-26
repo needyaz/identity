@@ -29,10 +29,6 @@ device are the uid (`SHA-256(pubkey)`), the store-binding token (a hash of
 two public inputs), and Ed25519 verification against the signing key's
 public half. The backup key never leaves the device.
 
-Persistence is not this package's problem: durable seed storage (secure
-enclave, cloud tiering, tri-state reads, clobber-guarded writes) is composed
-by the app, outside this package, and handed in via `identityFromSeed`.
-
 Native mirrors exist because the Dart runtime isn't always reachable —
 notification service extensions and killed-state evaluators run outside
 Flutter's memory. See "Native crypto mirrors" below.
@@ -49,10 +45,10 @@ golden-vector file. See "Verifying this works" and `SPEC.md`.
   and canonical-JSON encoding for byte-exact signatures.
 - **`identity.dart`** — `Identity` (seed → X25519 keypair → uid), BIP39 recovery
   phrase round-trip, and the de-linked store-binding token.
+- **`identity_config.dart`** — `IdentityConfig`, the per-app namespace seam
+  (see below).
 
-That's the whole Dart surface — three files. Durable seed storage used to
-live here; since 1.0.0 it's composed by the consuming app and handed in via
-`identityFromSeed`.
+That's the whole Dart surface — three files.
 
 ## Per-app namespace: `IdentityConfig`
 

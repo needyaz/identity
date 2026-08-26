@@ -17,9 +17,10 @@ It was **extracted from a shipped production app** — this package is that
 app's crypto, moved in place. Only the app-specific namespace strings were
 lifted out into `IdentityConfig`.
 
-It is a standalone package consumed as a path dependency. It has **zero domain
-coupling** — no app models, no domain types. `groups` depends on this; apps
-depend on this (directly and via `groups`).
+It is a standalone package consumed as a git dependency (pinned to `main` —
+no tags yet; see "Consumption" below). It has **zero domain coupling** — no
+app models, no domain types. `groups` depends on this; apps depend on this
+(directly and via `groups`).
 
 ## The cardinal rule: byte-parity
 
@@ -45,6 +46,22 @@ Block Store channel), defined in the app's own codebase — app configs never li
 in this package. Apps must each pick a **distinct** namespace so identities
 and derived keys never collide or cross-join; an app migrating onto this package
 must use exactly the values it already shipped.
+
+## Consumption
+
+Consumers (`groups`, apps) depend on this via a **git dependency** pinned to
+`ref: main` — e.g. `identity: {git: {url: https://github.com/needyaz/identity.git,
+ref: main}}` — not a local path dependency. This replaced path dependencies
+(2026-08-26) to stop consumers resolving against an editable sibling checkout
+on disk and to make `pubspec.yaml` resolve correctly for anyone cloning a
+consumer repo without also having `identity` checked out alongside it.
+
+There is **no tagging/release discipline yet** — `ref: main` always resolves
+to whatever is latest on this repo's default branch, same as before. That's
+a deliberate, temporary simplification while there's a single shipping
+product (Mylo) and the rest of the stack is still in development; revisit
+(tag releases, pin consumers to specific tags) once a second product ships
+or a consumer needs to move independently of `main`.
 
 ## Conventions
 
@@ -74,9 +91,11 @@ Kotlin). Scope is deliberately narrow: **only** the generic primitives mirror
 (DH shared secret, `secretbox`/`box`, sealed box) — app business logic stays
 in the apps, not here.
 
-- `native/ios/` — SPM package `IdentityCrypto`, depends on `swift-sodium`'s
-  `Clibsodium` product (raw C bindings, not the high-level `Sodium` wrapper).
-  `cd native/ios && swift test` — headless, no simulator.
+- `native/ios/IdentityCrypto/` — SPM package `IdentityCrypto`, depends on
+  `swift-sodium`'s `Clibsodium` product (raw C bindings, not the high-level
+  `Sodium` wrapper). `cd native/ios/IdentityCrypto && swift test` — headless,
+  no simulator. Also has a CocoaPods view (`IdentityCrypto.podspec`) of the
+  same sources, for a consumer's CocoaPods-based targets.
 - `native/android/` — standalone Gradle project, module `:crypto`, namespace
   `blue.luci.identity` (nothing app-specific belongs here; the JNI shim is
   `identity_crypto` throughout — lib name, CMake target, exported symbols).
@@ -84,9 +103,8 @@ in the apps, not here.
   test — `cd native/android && ./gradlew :crypto:connectedDebugAndroidTest`.
   The Gradle wrapper (jar + scripts) is committed, so no system Gradle is
   needed.
-- Both are currently **unwired** — no app depends on them yet. Get these fully
-  working and tested standalone first; wiring an app onto them is a separate,
-  later step — don't conflate the two.
+- **Consumed by Mylo by path** (2026-08-25) — see README.md "Native crypto
+  mirrors" for the exact wiring (podspec + Gradle project include).
 - If you touch the crypto logic in `native/ios/` or `native/android/`, the change must be
   mirrored in `lib/src/crypto.dart` (and vice versa) and `test/crypto_vectors.json`
   must still pass on all three. A divergence here is a security bug, not a
@@ -97,8 +115,8 @@ in the apps, not here.
 `dart test` — crypto round-trips + failure modes, identity/BIP39 determinism,
 the store-binding parity vector, and the golden-vector suite. `dart analyze`
 must be clean (`lints/recommended`). No Flutter SDK needed.
-`native/ios/`: `swift test`. `native/android/`: `./gradlew :crypto:connectedDebugAndroidTest`
-(emulator required).
+`native/ios/IdentityCrypto/`: `swift test`. `native/android/`:
+`./gradlew :crypto:connectedDebugAndroidTest` (emulator required).
 
 ## Docs & commits
 

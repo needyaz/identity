@@ -64,6 +64,40 @@ class CryptoVectorsAndroidTest {
     }
 
     @Test
+    fun decryptBoxBytesMatchesDecryptBoxFields() {
+        // decryptBoxBytes is decryptBox minus the JSONObject parse: its raw
+        // bytes, parsed by hand here, must agree with decryptBox's own parse.
+        val cases = vectors().getJSONArray("box_decrypt")
+        for (i in 0 until cases.length()) {
+            val v = cases.getJSONObject(i)
+            val id = v.getString("id")
+            val shared = NativeCrypto.deriveSharedKey(
+                b64(v.getString("recipientSkB64")), b64(v.getString("senderPkB64")))
+            assertNotNull("$id: deriveSharedKey", shared)
+            val raw = NativeCrypto.decryptBoxBytes(v.getString("b64"), shared!!)
+            assertNotNull("$id: decryptBoxBytes", raw)
+            val parsed = JSONObject(String(raw!!, Charsets.UTF_8))
+            val expected = v.getJSONObject("expected")
+            for (k in expected.keys()) {
+                assertEquals("$id: field $k", expected.getString(k), parsed.getString(k))
+            }
+        }
+    }
+
+    @Test
+    fun decryptBoxBytesReturnsNullOnWrongKeyTruncatedOrGarbageInput() {
+        val v = vectors().getJSONArray("box_decrypt").getJSONObject(0)
+        val shared = NativeCrypto.deriveSharedKey(
+            b64(v.getString("recipientSkB64")), b64(v.getString("senderPkB64")))!!
+        val wrongKey = ByteArray(32) { 0x42 }
+
+        assertNull("wrong key", NativeCrypto.decryptBoxBytes(v.getString("b64"), wrongKey))
+        assertNull("truncated", NativeCrypto.decryptBoxBytes(
+            Base64.encodeToString(b64(v.getString("b64")).copyOf(10), Base64.NO_WRAP), shared))
+        assertNull("garbage base64", NativeCrypto.decryptBoxBytes("not valid base64!!", shared))
+    }
+
+    @Test
     fun secretBoxDecryptVectors() {
         val cases = vectors().getJSONArray("secretbox_decrypt")
         for (i in 0 until cases.length()) {

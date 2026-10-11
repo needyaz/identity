@@ -72,14 +72,21 @@ object NativeCrypto {
         return Base64.encodeToString(nonce + cipher, Base64.NO_WRAP)
     }
 
-    fun decryptBox(b64Payload: String, sharedKey: ByteArray): Map<String, Any>? {
+    /** Box-open [b64Payload] (nonce || ciphertext, NO_WRAP base64) with [sharedKey]; the raw
+     * plaintext, or null on any failure. For payloads that aren't a JSON object (e.g. a JSON
+     * array) — [decryptBox] parses as an object and returns null for those; this doesn't parse. */
+    fun decryptBoxBytes(b64Payload: String, sharedKey: ByteArray): ByteArray? {
         if (!ready) return null
         if (sharedKey.size != BOX_BEFORENMBYTES) return null
         val combined = try { Base64.decode(b64Payload, Base64.NO_WRAP) } catch (_: Exception) { return null }
         if (combined.size < BOX_NONCEBYTES + BOX_MACBYTES) return null
         val nonce      = combined.sliceArray(0 until BOX_NONCEBYTES)
         val ciphertext = combined.sliceArray(BOX_NONCEBYTES until combined.size)
-        val plaintext  = nativeBoxOpenEasyAfterNm(ciphertext, nonce, sharedKey) ?: return null
+        return nativeBoxOpenEasyAfterNm(ciphertext, nonce, sharedKey)
+    }
+
+    fun decryptBox(b64Payload: String, sharedKey: ByteArray): Map<String, Any>? {
+        val plaintext = decryptBoxBytes(b64Payload, sharedKey) ?: return null
         return try {
             val json = org.json.JSONObject(String(plaintext, Charsets.UTF_8))
             buildMap { json.keys().forEach { k -> put(k, json.get(k)) } }

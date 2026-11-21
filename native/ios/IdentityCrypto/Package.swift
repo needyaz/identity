@@ -4,7 +4,7 @@ import PackageDescription
 let package = Package(
     name: "IdentityCrypto",
     platforms: [
-        .iOS(.v13),
+        .iOS(.v15),
         .macOS(.v11),
     ],
     products: [

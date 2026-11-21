@@ -1,3 +1,7 @@
+## Unreleased
+
+- The Swift package now requires iOS 15 or later (was iOS 13), matching the podspec.
+
 ## 1.0.0
 
 - **Pure Dart.** The tiered secure-storage layer (`SecureKvStore`,

@@ -131,3 +131,21 @@ layer still enforces them):
 `IdentityConfig.seedStorageKey` and `IdentityConfig.blockStoreChannel` remain
 in the config as passive per-app namespace data the app forwards to its
 storage layer; this package never reads them.
+
+## Requirements traceability
+
+`spec/requirements.tsv` has one row per requirement above: `id`, `status`
+(`C` = covered by a test, `U` = uncovered), `source` (the section of this
+document), a one-sentence `statement`, and the `test` file that proves it.
+Every change to the package's code must update this document and the table.
+
+Behaviours not stated above but pinned by the code and tests:
+
+- `encryptBlobWithBoxDisposing` / `decryptBlobWithBoxDisposing` wrap their
+  non-disposing counterparts and dispose the `PrecalculatedBox` whether or not
+  the call succeeds.
+- `decryptBlob` / `decryptBlobWithBox` throw `SodiumException` on a wrong key
+  or tampered ciphertext; `openSealedString`, `openSealedBytes` and
+  `verifyDetached` never throw and return `null` / `false` instead.
+- `identityFromMnemonic` throws `ArgumentError` for an invalid mnemonic.
+- `uidForBoxPublicKey(pub)` is the uid of an `Identity` with that box public key.

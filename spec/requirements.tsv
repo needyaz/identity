@@ -1,0 +1,33 @@
+id	status	source	statement	test
+IDN-01	C	SPEC.md Identity	generateIdentity, seed to mnemonic and back via identityFromMnemonic reproduces the same seed, keypair and uid.	test/identity_test.dart
+IDN-02	C	SPEC.md Identity	uid is SHA-256 of the box public key, first 16 bytes, as 32-char lowercase hex, and equals uidForBoxPublicKey.	test/identity_test.dart
+IDN-03	C	SPEC.md Identity	An invalid BIP39 mnemonic makes identityFromMnemonic throw ArgumentError.	test/identity_test.dart
+IDN-04	C	SPEC.md Identity	The uid for the known box public key matches the pinned known-answer vector.	test/identity_test.dart
+DER-01	C	SPEC.md Domain-separated derivations	deriveBackupKey is deterministic for the same seed and domain.	test/crypto_test.dart
+DER-02	C	SPEC.md Domain-separated derivations	deriveBackupKey yields different keys for different domains.	test/crypto_test.dart
+DER-03	C	SPEC.md Known-answer vectors	deriveBackupKey matches the known-answer vectors, including the pad-to-16 and no-padding branches.	test/crypto_test.dart
+DER-04	C	SPEC.md Domain-separated derivations	deriveSigningKeyPair is deterministic for the same seed and domain.	test/crypto_test.dart
+DER-05	C	SPEC.md Known-answer vectors	deriveSigningKeyPair public key matches the known-answer vector.	test/crypto_test.dart
+DER-06	C	SPEC.md Domain-separated derivations	deriveStoreBindingToken matches the known-answer vector.	test/identity_test.dart
+DER-07	C	SPEC.md Domain-separated derivations	deriveStoreBindingToken is a valid 8-4-4-4-12 UUID and differs from the uid.	test/identity_test.dart
+DER-08	C	SPEC.md Domain-separated derivations	deriveStoreBindingToken yields different tokens for different domains.	test/identity_test.dart
+DER-09	C	SPEC.md Known-answer vectors	The known-answer vectors in SPEC.md are re-derived independently from hashlib and cryptography.	tools/verify_vectors.py
+PRM-01	C	SPEC.md Generic primitives	encryptBlob/decryptBlob round-trip a JSON map with a symmetric key.	test/crypto_test.dart
+PRM-02	C	SPEC.md Generic primitives	decryptBlob with the wrong key fails authentication.	test/crypto_test.dart
+PRM-03	C	SPEC.md Generic primitives	encryptBlobWithBox/decryptBlobWithBox round-trip between two identities and both directions agree on the shared secret.	test/crypto_test.dart
+PRM-04	C	SPEC.md Generic primitives	encryptBlobWithBoxDisposing disposes the box after success.	test/crypto_test.dart
+PRM-05	C	SPEC.md Generic primitives	decryptBlobWithBoxDisposing disposes the box after success.	test/crypto_test.dart
+PRM-06	C	SPEC.md Generic primitives	decryptBlobWithBoxDisposing disposes the box even when decryption throws.	test/crypto_test.dart
+PRM-07	C	SPEC.md Generic primitives	sealString/openSealedString round-trip a string through an anonymous sealed box.	test/crypto_test.dart
+PRM-08	C	SPEC.md Generic primitives	openSealedString with the wrong key returns null rather than throwing.	test/crypto_test.dart
+PRM-09	C	SPEC.md Generic primitives	openSealedBytes round-trips raw bytes.	test/crypto_test.dart
+PRM-10	C	SPEC.md Generic primitives	signDetached/verifyDetached round-trip, and a tampered payload fails verification.	test/crypto_test.dart
+PRM-11	C	SPEC.md Generic primitives	canonicalJsonBytes sorts map keys recursively and emits whitespace-free JSON.	test/crypto_test.dart
+PRM-12	U	SPEC.md Generic primitives	verifyDetached returns false rather than throwing on malformed input.	
+PRM-13	C	SPEC.md Generic primitives	deriveSharedSecret produces an X25519 precalculated box from a peer public key and own secret key.	test/crypto_test.dart
+CFG-01	U	SPEC.md IdentityConfig	IdentityConfig carries five per-app namespace fields: seedStorageKey, backupKeyDomain, signingKeyDomain, storeBindingDomain, blockStoreChannel.	
+VEC-01	C	SPEC.md Native crypto mirrors	box_decrypt golden vectors decrypt via deriveSharedSecret and decryptBlobWithBox.	test/crypto_vectors_test.dart
+VEC-02	C	SPEC.md Native crypto mirrors	secretbox_decrypt golden vectors decrypt via decryptBlob, and expectFail cases throw SodiumException.	test/crypto_vectors_test.dart
+VEC-03	C	SPEC.md Native crypto mirrors	seal_open golden vectors open via openSealedString, and tampered or wrong-recipient cases return null.	test/crypto_vectors_test.dart
+STO-01	U	SPEC.md Secure storage	A failed read is never reported as no identity (enforced by the consuming storage layer, not this package).	
+STO-02	U	SPEC.md Secure storage	A fresh seed never overwrites an existing one without explicit recovery intent (enforced by the consuming storage layer).	

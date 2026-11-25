@@ -86,7 +86,7 @@ The generic primitives above — `deriveSharedSecret`, `encryptBlob`/`decryptBlo
 `openSealedBytes` — have byte-identical native reimplementations for hosts that
 can't reach the Dart runtime (a killed-state background evaluator, a
 notification service extension). This is a **three-way mirror**: Dart
-(`lib/src/crypto.dart`), Swift (`native/ios/Sources/IdentityCrypto/NativeCrypto.swift`),
+(`lib/src/crypto.dart`), Swift (`native/ios/IdentityCrypto/Sources/IdentityCrypto/NativeCrypto.swift`),
 Kotlin (`native/android/crypto/.../NativeCrypto.kt` + JNI). All three must produce
 identical ciphertext/plaintext for the same inputs.
 
@@ -106,6 +106,13 @@ assets, since instrumented tests can't reach the host filesystem). Sections:
   "identity-pad-v1")` known answer, so the section pins the full
   derive → encrypt → decrypt backup pipeline. `expectFail` cases fail as
   null/nil on the native mirrors and as `SodiumException` in Dart.
+
+The Kotlin mirror also exposes `decryptBoxBytes(b64Payload, sharedKey)`: it
+opens the same `base64(nonce ‖ ciphertext)` box payload as `decryptBox` and
+returns the raw plaintext bytes without parsing them as JSON, so non-object payloads work (`decryptBox`
+is built on it). It returns null for a wrong key, truncated payload or
+invalid base64, never throws. Native tests for these behaviours are listed as
+VEC-04..VEC-10 in `spec/requirements.tsv`.
 
 A divergence in any of the three implementations against this fixture is a
 crypto-mirror drift bug — the security-relevant kind, not a cosmetic one. The
